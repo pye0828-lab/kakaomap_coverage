@@ -68,41 +68,98 @@
 
 ---
 
-## 3. 웹서버 설정 — `.md` 파일 외부 접근 차단 (필수)
+## 3. 웹서버 설정 (필수)
 
-이 레포는 정적 파일을 그대로 서빙하므로 **`CLAUDE.md`·`README.md` 등 문서 파일이 웹루트에 그대로 놓인다.** 배포 시 **`.md` 확장자 전체를 외부에서 못 읽게 막는다.**
+- **서비스 URL**: `https://yepark.co.kr/bovicare-gmapkakao/`
+- **실제 경로**: `/var/www/html/webpage-kakaomap-coverage/` (라즈베리파이, nginx)
+- **설정 파일**: `/etc/nginx/sites-enabled/default` 의 `server_name yepark.co.kr` HTTPS 블록
 
-- 이유: 작업 지침·내부 맥락·배포 경로가 서비스 URL로 그대로 노출되는 것을 막는다. (GitHub 퍼블릭 레포에서는 공개 유지 — 차단 대상은 **웹서버뿐**이다.)
-- 적용 대상: `https://yepark.co.kr/bovicarekormap` 배포 서버(라즈베리파이).
-- **배포 절차에 포함한다.** 서버를 새로 세팅하거나 웹서버를 교체하면 이 설정부터 다시 넣는다.
+이 레포는 단일 `index.html`을 정적으로 그대로 서빙한다(빌드 없음). 그래서 **`CLAUDE.md`·`README.md`·`.git/`이 웹루트에 그대로 놓인다** — 아래 차단 설정이 서비스 공개의 전제조건이다.
 
-### nginx
+### 3.1 필수 설정 세 가지
 
-server 블록(또는 해당 location) 안에 추가:
+**(1) 서비스 경로 매핑** — 폴더명(`webpage-kakaomap-coverage`)을 URL에 노출하지 않기 위해 `alias`로 붙인다.
 
 ```nginx
-location ~* /bovicarekormap/.*\.md$ {
+# trailing slash 없이 들어와도 alias가 먹도록 리다이렉트 (없으면 404)
+location = /bovicare-gmapkakao {
+    return 301 /bovicare-gmapkakao/;
+}
+
+location /bovicare-gmapkakao/ {
+    alias /var/www/html/webpage-kakaomap-coverage/;
+    index index.html;
+    try_files $uri $uri/ =404;
+}
+```
+
+**(2) 내부 폴더명 직접 접근 차단** — `alias`를 써도 `root` 하위에 실제 폴더가 있으면 폴더명으로 우회 접근된다. 기존 차단 regex에 폴더명을 **추가**한다(새 location을 만들지 않는다 — 형제 경로가 이미 한 줄에 모여 있다).
+
+```nginx
+location ~ ^/(webpage-yepark-home|...|webpage-kakaomap-coverage)(/|$) {
     deny all;
     return 404;
 }
 ```
 
-### Apache
+**(3) 형상관리·문서 파일 차단** — server 블록 전역에 이미 걸려 있어야 한다. 없으면 넣는다.
 
-`.htaccess`를 웹루트에 두거나(단, `AllowOverride FileInfo` 이상 필요) 사이트 설정에 직접:
+```nginx
+location ~ /\. {                              # .git, .env 등 숨김 파일
+    deny all;
+    return 404;
+}
 
-```apache
-<FilesMatch "\.md$">
-    Require all denied
-</FilesMatch>
+location ~* \.(md|sh|gitignore|gitattributes)$ {   # CLAUDE.md, README.md 등
+    deny all;
+    return 404;
+}
 ```
 
-### 적용 확인
+> 이유: 작업 지침·내부 맥락·배포 경로가 서비스 URL로 그대로 노출되는 것을 막는다. GitHub 퍼블릭 레포에서는 공개 유지 — 차단 대상은 **웹서버뿐**이다.
 
-배포 후 아래가 **404 또는 403**이어야 한다. 200이 나오면 설정이 안 먹은 것이다.
+### 3.2 적용 절차
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}\n" https://yepark.co.kr/bovicarekormap/CLAUDE.md
+sudo cp /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.bak.$(date +%Y%m%d-%H%M%S)
+# ... 위 설정 추가 ...
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+`nginx -t`가 실패하면 reload하지 않는다. (`&&`로 묶는 이유)
+
+### 3.3 적용 확인 — 배포 후 반드시 돌린다
+
+```bash
+for u in /bovicare-gmapkakao /bovicare-gmapkakao/ \
+         /bovicare-gmapkakao/CLAUDE.md /bovicare-gmapkakao/README.md \
+         /bovicare-gmapkakao/.git/config /webpage-kakaomap-coverage/ ; do
+  printf "%-40s %s\n" "$u" "$(curl -s -o /dev/null -w '%{http_code}' https://yepark.co.kr$u)"
+done
+```
+
+기대값 — 이와 다르면 설정이 안 먹은 것이다:
+
+| 경로 | 기대 |
+|---|---|
+| `/bovicare-gmapkakao` | **301** (→ `/bovicare-gmapkakao/`) |
+| `/bovicare-gmapkakao/` | **200** |
+| `/bovicare-gmapkakao/CLAUDE.md` | **404** |
+| `/bovicare-gmapkakao/README.md` | **404** |
+| `/bovicare-gmapkakao/.git/config` | **404** |
+| `/webpage-kakaomap-coverage/` | **404** |
+
+### 3.4 서버를 새로 세팅하거나 웹서버를 교체하면
+
+위 3개 설정부터 다시 넣고 3.3을 돌린다. Apache로 교체하는 경우 (2)(3)에 해당하는 최소 설정:
+
+```apache
+<FilesMatch "\.(md|sh|gitignore|gitattributes)$">
+    Require all denied
+</FilesMatch>
+<DirectoryMatch "/\.">
+    Require all denied
+</DirectoryMatch>
 ```
 
 ---
@@ -110,4 +167,5 @@ curl -s -o /dev/null -w "%{http_code}\n" https://yepark.co.kr/bovicarekormap/CLA
 ## 4. 키 취급
 
 - **카카오 JavaScript 키는 코드에 그대로 넣는다.** 클라이언트 노출형이고 **도메인 화이트리스트**로 보호된다 — 이게 정상 사용법이다.
+  - 화이트리스트 등록 위치는 `앱 설정 > 앱 > 플랫폼키 > JavaScript 키 [수정] > JavaScript SDK 도메인`. 콘솔 메뉴 경로와 에러코드 대응은 [`README.md`](README.md) "사용 / 설정"에 한 곳으로 정리했다 — **여기에 중복해서 적지 않는다.**
 - 그 외 토큰·계정정보는 이 레포에 넣지 않는다. (레포 밖 `key/` 폴더에서 관리)

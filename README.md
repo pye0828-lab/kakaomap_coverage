@@ -23,19 +23,51 @@
 
 정적 HTML 한 파일이라 별도 빌드가 필요 없다. 웹서버에 `index.html`을 올리면 동작한다.
 
-단, **Kakao Maps JavaScript 키**가 필요하다. [Kakao Developers](https://developers.kakao.com)에서 애플리케이션을 만든 뒤:
+단, **Kakao Maps JavaScript 키**가 필요하다. [Kakao Developers](https://developers.kakao.com)에서 애플리케이션을 만든 뒤 아래 3가지를 설정한다. **하나라도 빠지면 지도가 안 뜬다.**
 
-1. **앱 키 → JavaScript 키**를 `index.html`의 SDK 로드 URL `appkey=`에 지정
-2. **제품 설정 → 카카오맵 → 활성화 ON**
-   - 켜지 않으면 SDK 요청이 `403 disabled OPEN_MAP_AND_LOCAL service`로 거부된다
-3. **앱 설정 → 플랫폼 → Web → 사이트 도메인**에 서비스할 주소를 **origin(스킴+호스트+포트)** 형태로 등록
-   - 예: `https://yepark.co.kr`, 로컬 확인용 `http://localhost:8080`
-   - 경로(`/bovicarekormap`)는 검사하지 않으므로 origin만 맞으면 된다
-   - 미등록 시 `401 domain mismatched`
+### 1. JavaScript 키를 코드에 넣기
 
-> 카카오 JavaScript 키는 클라이언트에 노출되는 것이 정상이며, 도메인 화이트리스트로 보호된다.
+`내 애플리케이션 > 앱 설정 > 앱 > 플랫폼키`
 
-지도가 안 뜨면 화면에 현재 접속 origin과 함께 안내가 표시되므로, 그 값을 위 3번에 그대로 등록하면 된다.
+여기의 **JavaScript 키**를 `index.html` 맨 아래 SDK 로드 URL의 `appkey=`에 지정한다.
+
+```html
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=여기에_JavaScript_키&libraries=services&autoload=false"></script>
+```
+
+### 2. 도메인 등록 (JavaScript SDK 도메인)
+
+`내 애플리케이션 > 앱 설정 > 앱 > 플랫폼키 > JavaScript 키 [수정] > JavaScript SDK 도메인`
+
+> ⚠️ 도메인 등록란은 **JavaScript 키 항목의 `수정` 안**에 있다. 별도의 "플랫폼" 메뉴가 아니다 — 여기서 많이 헤맨다.
+
+서비스할 주소를 **origin(스킴 + 호스트 + 포트)** 형태로 등록한다.
+
+| 용도 | 등록값 |
+|---|---|
+| 운영 | `https://yepark.co.kr` |
+| 로컬 확인 | `http://localhost:8080` |
+
+- **경로(`/bovicare-gmapkakao`)는 검사하지 않는다.** origin만 맞으면 된다 — 경로까지 넣으면 오히려 안 된다.
+- 미등록 시 SDK 요청이 `401 domain mismatched`로 거부된다.
+
+### 3. 카카오맵 제품 활성화
+
+`내 애플리케이션 > 제품 설정 > 카카오맵` → **ON**
+
+- 키와 도메인이 다 맞아도 이게 꺼져 있으면 `403 disabled OPEN_MAP_AND_LOCAL service`로 거부된다.
+- 앱을 새로 만들면 **기본값이 OFF**다. 새 앱으로 옮길 때 반드시 다시 켠다.
+
+---
+
+> 카카오 JavaScript 키는 클라이언트에 노출되는 것이 정상이며, **도메인 화이트리스트로 보호**된다. 그래서 이 저장소에는 키를 코드에 그대로 둔다.
+
+지도가 안 뜨면 화면에 **현재 접속 origin**과 함께 안내가 표시된다. 그 값을 위 2번에 그대로 복사해 넣으면 된다. 브라우저 콘솔의 에러 코드로 원인을 가릴 수 있다:
+
+| 증상 | 원인 | 조치 |
+|---|---|---|
+| `401 domain mismatched` | 도메인 미등록 | 2번 |
+| `403 disabled OPEN_MAP_AND_LOCAL service` | 카카오맵 제품 OFF | 3번 |
 
 ## 자체 점검
 
@@ -49,9 +81,9 @@ index.html?selfcheck=1
 
 ## 배포
 
-`https://yepark.co.kr/bovicarekormap` (자체 호스팅)
+**https://yepark.co.kr/bovicare-gmapkakao/** (라즈베리파이 자체 호스팅, nginx)
 
-**웹서버에서 `*.md` 외부 접근을 차단할 것.** 이 저장소의 문서 파일이 서비스 URL로 그대로 노출되는 것을 막는다. 설정 방법은 [`CLAUDE.md`](CLAUDE.md) §3.
+**웹서버에서 `*.md`와 `.git/` 외부 접근을 차단할 것.** 이 저장소의 문서 파일과 형상관리 이력이 서비스 URL로 그대로 노출되는 것을 막는다. 필수 설정 3가지와 적용 확인 절차는 [`CLAUDE.md`](CLAUDE.md) §3.
 
 ## 코드 규칙
 
