@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  BoviCareKorMap — 게이트웨이 커버리지(반경) 확인용 지도 측정 도구
+  ----------------------------------------------------------------------------
+  · 지점 좌표 확인 / 경로 거리 측정 / 지점별 반경원 표시 / GPS 실시간 추적
+  · 원본: dream2k2/gmap-plus-fsm- (GeoMeasure, Google Maps 기반)
+    → 국내 위성영상이 더 최신인 카카오맵 스카이뷰로 지도 엔진을 전면 교체
+  · 작성: 바이브코딩(사람 지시 + AI 에이전트 작성) / 2026-08-05
+  · 코드룰: Ponytail (github.com/DietrichGebert/ponytail) 적용
+    - 주석은 전부 한글, "무엇"이 아니라 "왜"를 적는다
+    - 한계를 알고 자른 단순화는 `ponytail:` 주석으로 한계와 개선경로를 남긴다
+  · 상세 지침은 같은 폴더의 CLAUDE.md (※ 웹서버에서 *.md 외부접근 차단할 것)
+  ============================================================================
+-->
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#101418">
+<title>BoviCareKorMap — 커버리지·거리 측정</title>
+<style>
+  :root{
+    --bg:#101418; --panel:#181e24; --panel2:#1f2730;
+    --line:#2b3542; --txt:#e8edf2; --dim:#8a97a5;
+    --acc:#38b6ff; --acc2:#ffc53d; --ok:#4cd07d; --danger:#ff6b6b;
+    --mono:'SF Mono','Roboto Mono',Consolas,monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%;overflow:hidden;font-family:-apple-system,'Malgun Gothic','Noto Sans KR',sans-serif;background:var(--bg);color:var(--txt)}
+
+  /* ===== 레이아웃: 가로형 = 좌측 패널 + 지도 ===== */
+  #app{display:flex;height:100%;width:100%}
+  #panel{width:290px;min-width:290px;background:var(--panel);border-right:1px solid var(--line);
+         display:flex;flex-direction:column;z-index:10;transition:margin-left .25s}
+  #panel.hidden{margin-left:-290px}
+  #map{flex:1;height:100%;background:#0a0d10}
+
+  /* 세로 모드: 패널이 하단 시트로 */
+  @media (orientation:portrait){
+    #app{flex-direction:column-reverse}
+    #panel{width:100%;min-width:0;height:44%;border-right:none;border-top:1px solid var(--line);transition:margin-bottom .25s}
+    #panel.hidden{margin-left:0;margin-bottom:calc(-44vh + 0px)}
+  }
+
+  /* ===== 패널 내부 ===== */
+  #panelHead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+  #panelHead h1{font-size:14px;font-weight:700;letter-spacing:.5px}
+  #panelHead .sub{font-size:10px;color:var(--dim)}
+  #panelBody{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px}
+  .card h2{font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.8px;margin-bottom:6px;text-transform:uppercase}
+  .coord{font-family:var(--mono);font-size:13px;line-height:1.5;word-break:break-all}
+  .coord b{color:var(--acc)}
+  .muted{color:var(--dim);font-size:12px}
+
+  .row{display:flex;gap:6px;flex-wrap:wrap}
+  button{border:1px solid var(--line);background:var(--panel2);color:var(--txt);
+         border-radius:8px;padding:8px 10px;font-size:12px;font-weight:600;cursor:pointer}
+  button:active{transform:scale(.97)}
+  button.primary{background:var(--acc);border-color:var(--acc);color:#04121c}
+  button.warn{background:transparent;border-color:var(--danger);color:var(--danger)}
+  button.ghost{background:transparent}
+  button.small{padding:5px 8px;font-size:11px}
+  button.on{border-color:var(--acc);color:var(--acc)}
+
+  .pt{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;background:var(--panel2);
+      border:1px solid var(--line);margin-bottom:6px}
+  .pt .badge{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+             font-size:11px;font-weight:800;color:#111;background:var(--acc2);flex-shrink:0}
+  .pt .info{flex:1;min-width:0}
+  .pt .info .ll{font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pt .info .seg{font-size:10px;color:var(--dim)}
+  .pt .del{color:var(--danger);background:none;border:none;font-size:15px;padding:2px 6px}
+
+  #totalDist{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--acc2)}
+  #gpsDist{font-family:var(--mono);font-size:14px;color:var(--ok)}
+
+  /* ===== 지도 위 플로팅 버튼 ===== */
+  #fabs{position:absolute;top:10px;left:10px;z-index:20;display:flex;flex-direction:column;gap:8px}
+  .fab{width:42px;height:42px;border-radius:10px;background:var(--panel);border:1px solid var(--line);
+       color:var(--txt);font-size:18px;display:flex;align-items:center;justify-content:center;
+       box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  #mapWrap{position:relative;flex:1;height:100%}
+
+  .toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#000c;color:#fff;
+         padding:8px 16px;border-radius:20px;font-size:12px;z-index:200;opacity:0;transition:opacity .3s;pointer-events:none}
+  .toast.show{opacity:1}
+
+  /* 지도 위 거리 라벨 (카카오 CustomOverlay 내용물).
+     pointer-events:none 이 없으면 라벨이 지도 클릭(=지점 추가)을 가로챈다. */
+  .dist-label{font-family:var(--mono);font-size:14px;font-weight:800;white-space:nowrap;pointer-events:none;
+              text-shadow:0 0 3px #000,0 0 6px #000,1px 1px 2px #000}
+
+  /* 지도 로딩 실패 안내 (앱키 도메인 미등록 등) */
+  #mapErr{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;padding:24px;
+          background:var(--bg);text-align:center;font-size:13px;line-height:1.7;color:var(--dim)}
+  #mapErr b{color:var(--danger)}
+
+  /* 출처 표기 */
+  #credit{font-size:10px;color:var(--dim);line-height:1.6;padding:2px 2px 6px;border-top:1px solid var(--line);margin-top:2px}
+  #credit a{color:var(--dim);text-decoration:underline}
+
+  /* 자체 점검 결과 오버레이 (?selfcheck=1) */
+  #selfcheck{position:fixed;inset:0;z-index:300;background:#0b0f13;color:var(--txt);padding:20px;
+             font-family:var(--mono);font-size:13px;line-height:1.7;white-space:pre-wrap;overflow:auto}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- 좌측(가로) / 하단(세로) 패널 -->
+  <div id="panel">
+    <div id="panelHead">
+      <div>
+        <h1>BoviCareKorMap</h1>
+        <div class="sub">커버리지 · 좌표 · 거리 측정</div>
+      </div>
+    </div>
+    <div id="panelBody">
+
+      <div class="card">
+        <h2>🔍 장소 검색</h2>
+        <div style="display:flex;gap:6px">
+          <input id="searchInput" type="text" placeholder="장소명 또는 좌표"
+            style="flex:1;min-width:0;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-size:13px">
+          <button class="primary small" onclick="doSearch()">검색</button>
+        </div>
+        <div class="muted" style="font-size:10px;margin-top:5px">
+          장소명(예: 제주 애월읍사무소) 또는 좌표(예: 33.4011689, 126.3664674)
+        </div>
+        <div id="searchResults" style="margin-top:6px"></div>
+      </div>
+
+      <div class="card">
+        <h2>📍 현재 위치 (GPS)</h2>
+        <div class="coord" id="gpsCoord">— 미확인 —</div>
+        <div class="muted" id="gpsAcc"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="primary small" onclick="locateMe()">위치 갱신</button>
+          <button class="small" id="trackBtn" onclick="toggleTrack()">실시간 추적 OFF</button>
+          <button class="small ghost" onclick="copyText(gps ? fmt(gps.lat)+', '+fmt(gps.lng) : '')">복사</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🎯 선택 지점 <span class="muted">(지도를 탭)</span></h2>
+        <div class="row" style="align-items:center;margin-bottom:8px;gap:10px">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
+            반경(m)
+            <input id="radiusInput" type="number" value="500" min="1" step="50"
+              style="width:72px;padding:5px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-family:var(--mono);font-size:12px"
+              onchange="applyRadius()">
+          </label>
+          <label style="display:flex;align-items:center;gap:5px;font-size:12px">
+            <input id="radiusToggle" type="checkbox" checked onchange="applyRadius()"> 반경 표시
+          </label>
+        </div>
+        <div id="ptList"><div class="muted">지도를 탭하면 지점이 추가됩니다.</div></div>
+        <div class="row" style="margin-top:6px">
+          <button class="warn small" onclick="clearPts()">전체 삭제</button>
+          <button class="small" onclick="undoPt()">↩ 되돌리기</button>
+          <button class="small" id="measureBtn" onclick="toggleMeasure()">✋ 지정 종료</button>
+        </div>
+        <div class="muted" style="font-size:10px;margin-top:5px">탭 = 지점 추가 · 우클릭(길게 누르기) = 지정 종료 · 마커 드래그로 이동</div>
+      </div>
+
+      <div class="card">
+        <h2>📏 거리</h2>
+        <div class="muted">전체 거리 (경로)</div>
+        <div id="totalDist">0 m</div>
+        <div id="segList" style="margin-top:6px"></div>
+        <div class="muted" style="margin-top:8px">현재위치 → 마지막 지점</div>
+        <div id="gpsDist">—</div>
+      </div>
+
+      <div class="card">
+        <h2>⚙️ 지도</h2>
+        <div class="row" id="mapTypeRow">
+          <button class="small" data-type="skyview" onclick="setMapType('skyview')">스카이뷰</button>
+          <button class="small" data-type="hybrid" onclick="setMapType('hybrid')">스카이뷰+라벨</button>
+          <button class="small" data-type="roadmap" onclick="setMapType('roadmap')">일반</button>
+          <button class="small" data-type="terrain" onclick="setMapType('terrain')">지형</button>
+        </div>
+        <div class="muted" style="margin-top:6px;font-size:10px">
+          스카이뷰 = 카카오 위성영상(국내 최신본 자동 적용)
+        </div>
+      </div>
+
+      <!-- 출처 표기: 원본에 LICENSE가 없어 원칙상 원작자 저작권이 살아있다.
+           화면에서도 출처가 보이도록 한 줄 남긴다(README에만 두지 않음). -->
+      <div id="credit">
+        원본 <a href="https://dream2k2.github.io/gmap-plus-fsm-/" target="_blank" rel="noopener">GeoMeasure</a>
+        (dream2k2, Google Maps) 기반 · 지도 <a href="https://map.kakao.com" target="_blank" rel="noopener">카카오맵</a> 스카이뷰
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 지도 -->
+  <div id="mapWrap">
+    <div id="fabs">
+      <button class="fab" onclick="togglePanel()" title="패널 접기/펴기">☰</button>
+      <button class="fab" onclick="locateMe()" title="내 위치">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round">
+          <circle cx="12" cy="12" r="7.2" stroke-width="2"/>
+          <circle cx="12" cy="12" r="3" stroke-width="2.4"/>
+          <line x1="12" y1="1.2" x2="12" y2="4" stroke-width="2.2"/>
+          <line x1="12" y1="20" x2="12" y2="22.8" stroke-width="2.2"/>
+          <line x1="1.2" y1="12" x2="4" y2="12" stroke-width="2.2"/>
+          <line x1="20" y1="12" x2="22.8" y2="12" stroke-width="2.2"/>
+        </svg>
+      </button>
+    </div>
+    <div id="map"></div>
+    <div id="mapErr">
+      <div>
+        <b>지도를 불러오지 못했습니다.</b><br>
+        카카오 개발자 콘솔 → 앱 설정 → 플랫폼 → Web 에<br>
+        현재 접속 주소(<span id="mapErrOrigin" style="font-family:var(--mono)"></span>)가<br>
+        등록되어 있는지 확인하세요.
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 카카오 앱키는 클라이언트 노출형이 정상 사용법이다(도메인 화이트리스트로 보호).
+     autoload=false + kakao.maps.load() 로 로딩 완료 시점을 직접 잡는다.
+     libraries=services 가 있어야 장소/주소 검색(Places·Geocoder)이 붙는다. -->
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=8a9487650e75ea74fa48a17b9ed951ba&libraries=services&autoload=false"></script>
+<script>
+let map, gps=null, gpsMarker=null, gpsCircle=null;
+let pts=[], markers=[], circles=[], segLabels=[], line=null;
+let rubberLine=null, rubberLabel=null;
+let watchId=null, places=null, geocoder=null;
+
+const fmt = v => v.toFixed(7);
+
+/* ---------- 지점별 색상 팔레트 ---------- */
+const PALETTE=['#38b6ff','#ff6b6b','#4cd07d','#ffc53d','#b28dff','#ff9f43','#00d2d3','#ff7eb3','#7bed9f','#e84393'];
+const colorOf=i=>PALETTE[i%PALETTE.length];
+
+/* ---------- 거리 ----------
+   구면 하버사인. 반경 6378137 m 는 WGS84 적도반경으로, 원본 도구(Google
+   spherical geometry)가 쓰던 값과 동일하다. 여기를 흔히 쓰는 평균반경
+   6371000 으로 바꾸면 결과가 약 0.11% 작아져 원본 대조표(용춘목장 실측)와
+   어긋난다 — 상수는 바꾸지 말 것.
+   ponytail: 지구를 구로 근사한다. 이 위도(33°N)에서 WGS84 타원체 실측
+   대비 최대 약 +0.35% 과대(예: 355.5 m 구간에서 +1.2 m). 커버리지 가늠
+   용도에는 충분하며, 측량 정밀도가 필요해지면 Vincenty 역계산으로 교체. */
+const EARTH_R = 6378137;
+function haversine(a,b){
+  const t=x=>x*Math.PI/180;
+  const dLat=t(b.lat-a.lat), dLng=t(b.lng-a.lng);
+  const h=Math.sin(dLat/2)**2+Math.cos(t(a.lat))*Math.cos(t(b.lat))*Math.sin(dLng/2)**2;
+  return 2*EARTH_R*Math.asin(Math.sqrt(h));
+}
+function fmtDist(m){
+  return m>=1000 ? (m/1000).toFixed(3)+' km' : m.toFixed(1)+' m';
+}
+
+/* ---------- 자체 점검 (?selfcheck=1) ----------
+   거리 계산이 깨지면 실패하는 최소 확인 하나. 기준값은 원본 도구로 측정한
+   용춘목장 A/B/C 실측(상위 지침 §4). 지도 SDK 없이 돌아가므로 앱키 도메인이
+   등록되지 않은 로컬에서도 검증할 수 있다. */
+function selfcheck(){
+  const A={lat:33.4011689,lng:126.3664674},
+        B={lat:33.4022213,lng:126.3647669},
+        C={lat:33.4042634,lng:126.3655233};
+  const cases=[['A↔B',haversine(A,B),196.7],
+               ['B↔C',haversine(B,C),237.9],
+               ['C↔A(폐합)',haversine(C,A),355.5],
+               ['전체거리',haversine(A,B)+haversine(B,C),434.7],
+               ['둘레',haversine(A,B)+haversine(B,C)+haversine(C,A),790.1]];
+  const lines=cases.map(([name,got,want])=>{
+    const ok=Math.abs(got-want)<=0.1;      // 기준값이 0.1 m 단위 반올림이라 허용오차도 0.1 m
+    return (ok?'PASS':'FAIL')+'  '+name.padEnd(11)+' 기대 '+want.toFixed(1)+' m / 실제 '+got.toFixed(1)+' m';
+  });
+  const failed=cases.filter(([,got,want])=>Math.abs(got-want)>0.1).length;
+  const out='BoviCareKorMap 자체 점검 — 용춘목장 실측 대조\n\n'+lines.join('\n')
+    +'\n\n'+(failed?('실패 '+failed+'건 — 거리 계산부를 확인하세요'):'전체 통과');
+  console.log(out);
+  const el=document.createElement('pre');
+  el.id='selfcheck'; el.textContent=out;
+  document.body.appendChild(el);
+}
+if(new URLSearchParams(location.search).has('selfcheck')) selfcheck();
+
+/* ---------- 지점 지정 모드 (우클릭/길게누르기 = 종료) ---------- */
+let measuring=true;
+function setMeasureUI(){
+  const b=document.getElementById('measureBtn');
+  if(b) b.textContent=measuring?'✋ 지정 종료':'▶ 지정 재개';
+}
+function toggleMeasure(){
+  measuring=!measuring;
+  if(!measuring) hideRubber();
+  setMeasureUI();
+  toast(measuring?'지점 지정 재개 — 지도를 탭하세요':'지점 지정 종료');
+}
+function finishMeasure(){
+  if(!measuring) return;
+  measuring=false; hideRubber(); setMeasureUI();
+  toast('지점 지정 종료 (재개: 패널의 ▶ 버튼)');
+}
+
+/* ---------- 좌표 변환 헬퍼 ----------
+   카카오는 LatLng 객체를 받고 돌려준다. 내부 상태는 원본과 같은 평범한
+   {lat,lng} 로 유지하고, 경계에서만 변환한다(계산·저장 코드가 SDK에 안 묶임). */
+const LL = p => new kakao.maps.LatLng(p.lat, p.lng);
+const toPt = ll => ({lat:ll.getLat(), lng:ll.getLng()});
+
+/* ---------- 마커 이미지 ----------
+   카카오 Marker 는 구글과 달리 글자 라벨을 못 붙인다. 라벨용 CustomOverlay 를
+   따로 띄우면 드래그할 때 둘을 같이 옮겨야 해서, 색 원+글자를 통째로 그린
+   SVG 데이터 URI 를 마커 이미지로 쓴다(마커 하나로 끝나 드래그 동기화 불필요). */
+function markerImage(color, letter){
+  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28">'
+    +'<circle cx="14" cy="14" r="12" fill="'+color+'" stroke="#fff" stroke-width="2"/>'
+    +'<text x="14" y="18.5" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="800" fill="#111">'+letter+'</text>'
+    +'</svg>';
+  return new kakao.maps.MarkerImage(
+    'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg),
+    new kakao.maps.Size(28,28),
+    {offset:new kakao.maps.Point(14,14)});   // 원의 중심이 좌표에 오도록
+}
+const letterOf = i => String.fromCharCode(65+(i%26));   // A, B, C...
+
+/* ---------- 반경 원 ---------- */
+function radiusVal(){ return Math.max(1, parseFloat(document.getElementById('radiusInput').value)||500); }
+function radiusOn(){ return document.getElementById('radiusToggle').checked; }
+function makeCircle(lat,lng,i){
+  const c=colorOf(i);
+  const circle=new kakao.maps.Circle({
+    center:LL({lat,lng}), radius:radiusVal(),
+    fillColor:c, fillOpacity:.13,
+    strokeColor:c, strokeOpacity:.85, strokeWeight:1.5});
+  // 카카오 Circle 에는 setVisible 이 없다 — 표시/숨김은 setMap(map|null) 로 한다.
+  circle.setMap(radiusOn()?map:null);
+  return circle;
+}
+function applyRadius(){
+  const r=radiusVal(), on=radiusOn();
+  circles.forEach(c=>{ c.setRadius(r); c.setMap(on?map:null); });
+}
+
+/* ---------- 거리 라벨 (지도 위 텍스트) ----------
+   카카오에는 구글의 Marker label 이 없어 CustomOverlay 로 만든다.
+   내용 div 를 들고 있다가 텍스트만 갈아끼우면 재생성 비용이 없다. */
+function makeDistLabel(pos, text, color){
+  const el=document.createElement('div');
+  el.className='dist-label';
+  el.style.color=color||'#4cd07d';
+  el.textContent=text;
+  const ov=new kakao.maps.CustomOverlay({
+    position:LL(pos), content:el, xAnchor:.5, yAnchor:.5, zIndex:5});
+  ov.setMap(map);
+  ov.el=el;
+  return ov;
+}
+function midOf(a,b){
+  // ponytail: 라벨을 놓을 자리라 대권(大圈) 보간 대신 산술 평균으로 끝낸다.
+  // 수백 m 구간에서는 오차가 mm 수준. 수십 km 짜리를 재게 되면 중점이 눈에
+  // 띄게 치우칠 수 있고, 그때는 구면 보간으로 바꾸면 된다.
+  return {lat:(a.lat+b.lat)/2, lng:(a.lng+b.lng)/2};
+}
+
+/* ---------- 러버밴드 (마지막 지점 → 커서, 점선 + 거리 미리보기) ---------- */
+function updateRubber(cursorPt){
+  if(!pts.length || !cursorPt){ hideRubber(); return; }
+  const last=pts[pts.length-1];
+  const path=[LL(last), LL(cursorPt)];
+  if(!rubberLine){
+    rubberLine=new kakao.maps.Polyline({path, strokeWeight:2, strokeColor:'#38b6ff',
+      strokeOpacity:.9, strokeStyle:'shortdash'});
+    rubberLine.setMap(map);
+  }else rubberLine.setPath(path);
+  const d=haversine(last, cursorPt);
+  const mid=midOf(last, cursorPt);
+  if(!rubberLabel) rubberLabel=makeDistLabel(mid, fmtDist(d), '#4cd07d');
+  else{ rubberLabel.setPosition(LL(mid)); rubberLabel.el.textContent=fmtDist(d); }
+}
+function hideRubber(){
+  if(rubberLine){ rubberLine.setMap(null); rubberLine=null; }
+  if(rubberLabel){ rubberLabel.setMap(null); rubberLabel=null; }
+}
+
+function undoPt(){
+  if(!pts.length){ toast('취소할 지점이 없습니다'); return; }
+  delPt(pts.length-1);
+}
+
+/* ---------- 장소/좌표 검색 ---------- */
+let searchMarker=null, searchResultsData=[];
+function clearSearchMarker(){
+  if(searchMarker){ searchMarker.setMap(null); searchMarker=null; }
+}
+function showSearchAt(lat,lng,label){
+  clearPts();            // 기존 측정 지점/거리 초기화
+  clearSearchMarker();
+  searchMarker=new kakao.maps.Marker({position:LL({lat,lng}), title:label||'검색 위치'});
+  searchMarker.setMap(map);
+  map.panTo(LL({lat,lng}));
+  map.setLevel(3);       // 카카오 level 은 작을수록 확대 — 3 이면 건물이 구분되는 배율
+  if(label) toast('📍 '+label);
+}
+function doSearch(){
+  const q=document.getElementById('searchInput').value.trim();
+  const box=document.getElementById('searchResults');
+  box.innerHTML='';
+  if(!q){ toast('검색어를 입력하세요'); return; }
+  // 좌표 형식 판별: "33.401, 126.366" / "33.401 126.366"
+  const m=q.match(/^(-?\d{1,3}(?:\.\d+)?)[,\s]+(-?\d{1,3}(?:\.\d+)?)$/);
+  if(m){
+    let lat=parseFloat(m[1]), lng=parseFloat(m[2]);
+    if(Math.abs(lat)>90 && Math.abs(lng)<=90){ [lat,lng]=[lng,lat]; toast('위도/경도 순서를 자동 보정했습니다'); }
+    if(Math.abs(lat)>90 || Math.abs(lng)>180){ toast('좌표 범위 오류 (위도 ±90, 경도 ±180)'); return; }
+    showSearchAt(lat,lng, fmt(lat)+', '+fmt(lng));
+    return;
+  }
+  if(!places){ toast('지도 로딩 후 다시 시도하세요'); return; }
+  // 카카오는 장소(Places)와 주소(Geocoder)가 별도 API다. 목장·시설명 같은
+  // 상호는 주소검색으로 안 잡히므로 장소검색을 먼저 돌리고, 결과가 없을 때만
+  // 주소검색으로 넘긴다(도로명·지번 주소를 그대로 입력한 경우).
+  places.keywordSearch(q, (data,status)=>{
+    if(status===kakao.maps.services.Status.OK){
+      pickOrList(data.map(d=>({
+        label:d.place_name+' — '+(d.road_address_name||d.address_name||''),
+        lat:parseFloat(d.y), lng:parseFloat(d.x)})));
+    }else if(status===kakao.maps.services.Status.ZERO_RESULT){
+      geocoder.addressSearch(q, (res,st)=>{
+        if(st===kakao.maps.services.Status.OK && res.length){
+          pickOrList(res.map(r=>({label:r.address_name, lat:parseFloat(r.y), lng:parseFloat(r.x)})));
+        }else toast('검색 결과 없음: '+q);
+      });
+    }else toast('검색 실패 — 잠시 후 다시 시도하세요');
+  });
+}
+function pickOrList(list){
+  searchResultsData=list;
+  if(list.length===1){ showSearchAt(list[0].lat, list[0].lng, list[0].label); return; }
+  document.getElementById('searchResults').innerHTML=
+    '<div class="muted" style="font-size:10px;margin-bottom:4px">결과 '+list.length+'건 — 선택하세요</div>'
+    + list.map((r,i)=>
+      '<div onclick="pickResult('+i+')" style="padding:7px 8px;margin-bottom:4px;border:1px solid var(--line);'
+      +'border-radius:8px;background:var(--bg);font-size:12px;cursor:pointer;line-height:1.4">'
+      + r.label +'</div>').join('');
+}
+function pickResult(i){
+  const r=searchResultsData[i];
+  if(!r) return;
+  showSearchAt(r.lat, r.lng, r.label);
+  document.getElementById('searchResults').innerHTML='';
+}
+
+/* ---------- 시작 ---------- */
+// 앱키 도메인 미등록·네트워크 차단으로 SDK 가 안 붙으면 빈 화면만 남는다.
+// 배포처(NAS·라즈베리파이)마다 origin 이 달라 실제로 가장 흔한 실패라, 원인을
+// 화면에 띄운다. kakao 미정의 상태로 load() 를 부르면 예외가 나면서 이 아래
+// 코드가 통째로 죽으므로 반드시 존재를 먼저 확인한다.
+function showMapError(){
+  document.getElementById('mapErrOrigin').textContent=location.origin;
+  document.getElementById('mapErr').style.display='flex';
+}
+if(window.kakao && window.kakao.maps) kakao.maps.load(initMap);
+else showMapError();
+
+function initMap(){
+  map=new kakao.maps.Map(document.getElementById('map'),{
+    // 기본 중심 = 용춘목장(제주 애월). GPS 를 못 잡는 데스크톱에서도 바로
+    // 현장을 보게 하려는 것이며, 측위에 성공하면 곧바로 현재 위치로 옮겨간다.
+    center:new kakao.maps.LatLng(33.4011689, 126.3664674),
+    level:4
+  });
+  map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+  setMapType('skyview');   // 기본 = 스카이뷰(국내 최신 위성영상)
+
+  kakao.maps.event.addListener(map,'click', e=>{
+    if(!measuring) return;
+    const p=toPt(e.latLng);
+    addPt(p.lat, p.lng); updateRubber(p);
+  });
+  kakao.maps.event.addListener(map,'mousemove', e=>{ if(measuring) updateRubber(toPt(e.latLng)); });
+  kakao.maps.event.addListener(map,'rightclick', finishMeasure);   // 우클릭/길게누르기 = 지정 종료
+  // 카카오 지도에는 mouseout 이벤트가 없어 컨테이너 DOM 에서 직접 잡는다.
+  document.getElementById('map').addEventListener('mouseleave', hideRubber);
+
+  places=new kakao.maps.services.Places();
+  geocoder=new kakao.maps.services.Geocoder();
+  document.getElementById('searchInput').addEventListener('keydown', e=>{
+    if(e.key==='Enter'){ e.target.blur(); doSearch(); }
+  });
+
+  // 패널을 접거나 펼치면 지도 컨테이너 크기가 바뀐다. 카카오는 이때
+  // relayout() 을 불러줘야 타일과 좌표가 다시 맞는다(구글은 자동).
+  document.getElementById('panel').addEventListener('transitionend', ()=>map.relayout());
+
+  // SDK 가 붙어도 도메인이 등록 안 됐으면 타일만 안 온다(회색 화면).
+  // 일정 시간 안에 타일이 한 번도 안 그려지면 같은 안내를 띄운다.
+  let tilesOk=false;
+  kakao.maps.event.addListener(map,'tilesloaded', ()=>{ tilesOk=true; });
+  setTimeout(()=>{ if(!tilesOk) showMapError(); }, 5000);
+
+  locateMe();
+}
+
+/* ---------- 현재 위치 ---------- */
+let centerOnFix=false;
+function locateMe(){
+  if(!navigator.geolocation){ toast('이 기기는 GPS를 지원하지 않습니다'); return; }
+  if(gps){ map.panTo(LL(gps)); if(map.getLevel()>4) map.setLevel(3); } // 즉시 이동 (마지막 확인 위치)
+  centerOnFix=true; // 새 측위 완료 시 한 번 더 정확한 위치로 이동
+  navigator.geolocation.getCurrentPosition(onPos, onPosErr,
+    {enableHighAccuracy:true, timeout:10000, maximumAge:0});
+}
+function toggleTrack(){
+  const btn=document.getElementById('trackBtn');
+  if(watchId!==null){
+    navigator.geolocation.clearWatch(watchId); watchId=null;
+    btn.textContent='실시간 추적 OFF';
+    btn.classList.remove('on');
+  }else{
+    watchId=navigator.geolocation.watchPosition(onPos, onPosErr,
+      {enableHighAccuracy:true, maximumAge:1000});
+    btn.textContent='실시간 추적 ON';
+    btn.classList.add('on');
+    toast('실시간 추적 시작');
+  }
+}
+function onPos(p){
+  gps={lat:p.coords.latitude, lng:p.coords.longitude};
+  // 측위 정확도(accuracy)는 기기·환경에 따라 수십 m 씩 흔들린다. 좌표만 믿고
+  // 보면 오판하므로 반드시 오차 반경을 숫자와 원으로 같이 보여준다.
+  const acc=p.coords.accuracy;
+  document.getElementById('gpsCoord').innerHTML=
+    `위도 <b>${fmt(gps.lat)}</b><br>경도 <b>${fmt(gps.lng)}</b>`;
+  document.getElementById('gpsAcc').textContent=`정확도 ±${acc.toFixed(1)} m`;
+  if(!gpsMarker){
+    const dot='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">'
+      +'<circle cx="10" cy="10" r="7" fill="#38b6ff" stroke="#fff" stroke-width="2"/></svg>';
+    gpsMarker=new kakao.maps.Marker({position:LL(gps), title:'현재 위치',
+      image:new kakao.maps.MarkerImage('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(dot),
+        new kakao.maps.Size(20,20), {offset:new kakao.maps.Point(10,10)})});
+    gpsMarker.setMap(map);
+    gpsCircle=new kakao.maps.Circle({center:LL(gps), radius:acc,
+      fillColor:'#38b6ff', fillOpacity:.12, strokeColor:'#38b6ff', strokeOpacity:.4, strokeWeight:1});
+    gpsCircle.setMap(map);
+    map.setCenter(LL(gps)); map.setLevel(3);
+  }else{
+    gpsMarker.setPosition(LL(gps));
+    gpsCircle.setPosition(LL(gps)); gpsCircle.setRadius(acc);   // 카카오 Circle 은 setCenter 가 아니라 setPosition
+  }
+  if(centerOnFix){ map.panTo(LL(gps)); if(map.getLevel()>4) map.setLevel(3); centerOnFix=false; }
+  updateDist();
+}
+function onPosErr(e){
+  toast('위치 확인 실패: '+(e.code===1?'권한 거부됨 (브라우저 위치권한 허용 필요)':e.message));
+}
+
+/* ---------- 지점 선택 ---------- */
+function addPt(lat,lng){
+  const idx=pts.length;
+  pts.push({lat,lng});
+  const m=new kakao.maps.Marker({position:LL({lat,lng}),
+    image:markerImage(colorOf(idx), letterOf(idx)), draggable:true});
+  m.setMap(map);
+  kakao.maps.event.addListener(m,'dragend', ()=>{
+    const i=markers.indexOf(m);
+    if(i<0) return;                       // 드래그 도중 삭제된 마커 방어
+    pts[i]=toPt(m.getPosition());
+    circles[i].setPosition(m.getPosition());
+    renderPts(); drawLine(); updateDist();
+  });
+  markers.push(m);
+  circles.push(makeCircle(lat,lng,idx));
+  renderPts(); drawLine(); updateDist();
+}
+function delPt(i){
+  markers[i].setMap(null);
+  circles[i].setMap(null);
+  pts.splice(i,1); markers.splice(i,1); circles.splice(i,1);
+  // 라벨·색상 재정렬 (A,B,C... 순서에 맞게)
+  markers.forEach((m,j)=>{
+    m.setImage(markerImage(colorOf(j), letterOf(j)));
+    circles[j].setOptions({fillColor:colorOf(j), strokeColor:colorOf(j)});
+  });
+  hideRubber();
+  renderPts(); drawLine(); updateDist();
+}
+function clearPts(){
+  markers.forEach(m=>m.setMap(null));
+  circles.forEach(c=>c.setMap(null));
+  pts=[]; markers=[]; circles=[];
+  hideRubber();
+  measuring=true; setMeasureUI(); // 전체 삭제 시 지정 모드 재개
+  renderPts(); drawLine(); updateDist();
+}
+function renderPts(){
+  const el=document.getElementById('ptList');
+  if(!pts.length){ el.innerHTML='<div class="muted">지도를 탭하면 지점이 추가됩니다.</div>'; return; }
+  el.innerHTML=pts.map((p,i)=>{
+    let seg='';
+    if(i>0) seg='이전 지점에서 '+fmtDist(haversine(pts[i-1],p));
+    return `<div class="pt">
+      <div class="badge" style="background:${colorOf(i)}">${letterOf(i)}</div>
+      <div class="info">
+        <div class="ll" onclick="copyText('${fmt(p.lat)}, ${fmt(p.lng)}')">${fmt(p.lat)}, ${fmt(p.lng)}</div>
+        <div class="seg">${seg||'시작 지점 · 드래그로 이동 가능'}</div>
+      </div>
+      <button class="del" onclick="delPt(${i})">✕</button>
+    </div>`;
+  }).join('');
+}
+function drawLine(){
+  if(line) line.setMap(null);
+  segLabels.forEach(l=>l.setMap(null)); segLabels=[];
+  if(pts.length<2){ line=null; return; }
+  line=new kakao.maps.Polyline({path:pts.map(LL), strokeColor:'#ffc53d',
+    strokeWeight:3, strokeOpacity:.9, strokeStyle:'solid'});
+  line.setMap(map);
+  // 각 구간 중앙에 거리 표시
+  for(let i=1;i<pts.length;i++){
+    segLabels.push(makeDistLabel(midOf(pts[i-1],pts[i]), fmtDist(haversine(pts[i-1],pts[i])), '#4cd07d'));
+  }
+}
+
+/* ---------- 거리 집계 ---------- */
+function updateDist(){
+  let total=0, rows='';
+  for(let i=1;i<pts.length;i++){
+    const d=haversine(pts[i-1],pts[i]);
+    total+=d;
+    rows+='<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:2px 0">'
+        +'<span style="color:var(--dim)">'+letterOf(i-1)+' ↔ '+letterOf(i)+'</span><span>'+fmtDist(d)+'</span></div>';
+  }
+  // 폐합 구간: 마지막 지점 ↔ A (지점 3개 이상일 때)
+  if(pts.length>=3){
+    const dc=haversine(pts[pts.length-1], pts[0]);
+    rows+='<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:2px 0;border-top:1px dashed var(--line);margin-top:2px">'
+        +'<span style="color:var(--acc)">'+letterOf(pts.length-1)+' ↔ A (폐합)</span><span>'+fmtDist(dc)+'</span></div>'
+        +'<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;padding:2px 0">'
+        +'<span style="color:var(--acc)">둘레 (폐합 포함)</span><span style="color:var(--acc2)">'+fmtDist(total+dc)+'</span></div>';
+  }
+  document.getElementById('totalDist').textContent=fmtDist(total);
+  document.getElementById('segList').innerHTML=rows;
+  const gd=document.getElementById('gpsDist');
+  gd.textContent=(gps && pts.length) ? fmtDist(haversine(gps, pts[pts.length-1])) : '—';
+}
+
+/* ---------- 지도 타입 ----------
+   카카오는 '기본 지도(SKYVIEW·ROADMAP·HYBRID)'와 '겹쳐 그리는 오버레이
+   (TERRAIN 등)'가 따로다. 지형은 일반지도 위에 얹는 오버레이라 둘을 같이 건다. */
+let terrainOn=false;
+function setMapType(t){
+  if(terrainOn){ map.removeOverlayMapTypeId(kakao.maps.MapTypeId.TERRAIN); terrainOn=false; }
+  if(t==='roadmap'||t==='terrain') map.setMapTypeId(kakao.maps.MapTypeId.ROADMAP);
+  else if(t==='hybrid')            map.setMapTypeId(kakao.maps.MapTypeId.HYBRID);
+  else                             map.setMapTypeId(kakao.maps.MapTypeId.SKYVIEW);
+  if(t==='terrain'){ map.addOverlayMapTypeId(kakao.maps.MapTypeId.TERRAIN); terrainOn=true; }
+  // 어느 타입인지 버튼으로 알 수 있게 표시 (원본은 위성+가 항상 기본이라 불필요했음)
+  document.querySelectorAll('#mapTypeRow button').forEach(b=>
+    b.classList.toggle('on', b.dataset.type===t));
+}
+
+/* ---------- UI 유틸 ---------- */
+function togglePanel(){ document.getElementById('panel').classList.toggle('hidden'); }
+function copyText(t){
+  if(!t){ toast('복사할 좌표가 없습니다'); return; }
+  navigator.clipboard?.writeText(t).then(()=>toast('복사됨: '+t)).catch(()=>toast('복사 실패'));
+}
+let toastTimer;
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2200);
+}
+</script>
+</body>
+</html>
