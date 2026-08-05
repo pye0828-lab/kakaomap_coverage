@@ -110,10 +110,26 @@ location ~ /\. {                              # .git, .env 등 숨김 파일
     return 404;
 }
 
-location ~* \.(md|sh|gitignore|gitattributes)$ {   # CLAUDE.md, README.md 등
+# CLAUDE.md·README.md 문서와 selfcheck.test.js 같은 개발용 스크립트
+location ~* \.(md|sh|gitignore|gitattributes|test\.js)$ {
     deny all;
     return 404;
 }
+```
+
+> `test\.js` 는 `*.test.js` 만 막는다 — 서비스 코드인 일반 `.js` 는 그대로 서빙된다.
+> 이 레포는 빌드가 없어 개발용 파일이 웹루트에 그대로 놓이므로, **파일을 추가할 때
+> 서비스에 필요한 것인지 먼저 따진다.** 아니면 이 목록에 확장자를 추가한다.
+
+### 3.1.1 백업 파일은 `sites-enabled/` 밖에 둔다
+
+`nginx.conf` 가 `include /etc/nginx/sites-enabled/*;` 로 **확장자를 가리지 않고** 읽는다.
+`default.bak.20260724` 같은 파일을 같은 디렉터리에 두면 server 블록이 중복 로드되고,
+`server_name` 이 겹쳐 어느 쪽이 먹는지가 파일명 정렬 순서로 결정된다.
+
+```bash
+sudo mkdir -p /etc/nginx/backups
+sudo cp /etc/nginx/sites-enabled/default /etc/nginx/backups/default.bak.$(date +%Y%m%d-%H%M%S)
 ```
 
 > 이유: 작업 지침·내부 맥락·배포 경로가 서비스 URL로 그대로 노출되는 것을 막는다. GitHub 퍼블릭 레포에서는 공개 유지 — 차단 대상은 **웹서버뿐**이다.
@@ -121,7 +137,8 @@ location ~* \.(md|sh|gitignore|gitattributes)$ {   # CLAUDE.md, README.md 등
 ### 3.2 적용 절차
 
 ```bash
-sudo cp /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.bak.$(date +%Y%m%d-%H%M%S)
+sudo mkdir -p /etc/nginx/backups   # sites-enabled/ 안에 두면 중복 로드된다 (§3.1.1)
+sudo cp /etc/nginx/sites-enabled/default /etc/nginx/backups/default.bak.$(date +%Y%m%d-%H%M%S)
 # ... 위 설정 추가 ...
 sudo nginx -t && sudo systemctl reload nginx
 ```
@@ -133,6 +150,7 @@ sudo nginx -t && sudo systemctl reload nginx
 ```bash
 for u in /bovicare-gmapkakao /bovicare-gmapkakao/ \
          /bovicare-gmapkakao/CLAUDE.md /bovicare-gmapkakao/README.md \
+         /bovicare-gmapkakao/selfcheck.test.js \
          /bovicare-gmapkakao/.git/config /webpage-kakaomap-coverage/ ; do
   printf "%-40s %s\n" "$u" "$(curl -s -o /dev/null -w '%{http_code}' https://yepark.co.kr$u)"
 done
@@ -146,6 +164,7 @@ done
 | `/bovicare-gmapkakao/` | **200** |
 | `/bovicare-gmapkakao/CLAUDE.md` | **404** |
 | `/bovicare-gmapkakao/README.md` | **404** |
+| `/bovicare-gmapkakao/selfcheck.test.js` | **404** |
 | `/bovicare-gmapkakao/.git/config` | **404** |
 | `/webpage-kakaomap-coverage/` | **404** |
 
