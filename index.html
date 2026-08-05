@@ -4,6 +4,9 @@
   BoviCareKorMap — 게이트웨이 커버리지(반경) 확인용 지도 측정 도구
   ----------------------------------------------------------------------------
   · 지점 좌표 확인 / 경로 거리 측정 / 지점별 반경원 표시 / GPS 실시간 추적
+  · 영역(방목지·농장경계) 다각형 + 지도 위 텍스트 주석 — 캡처 후 그림판 작업을
+    도구 안으로 옮긴 것. 저장은 GeoJSON(지도 엔진을 바꿔도 데이터가 남도록)
+  · 순수 로직 검증: node selfcheck.test.js / 브라우저는 index.html?selfcheck=1
   · 원본: dream2k2/gmap-plus-fsm- (GeoMeasure, Google Maps 기반)
     → 국내 위성영상이 더 최신인 카카오맵 스카이뷰로 지도 엔진을 전면 교체
   · 작성: 바이브코딩(사람 지시 + AI 에이전트 작성) / 2026-08-05
@@ -105,6 +108,52 @@
   #credit{font-size:10px;color:var(--dim);line-height:1.6;padding:2px 2px 6px;border-top:1px solid var(--line);margin-top:2px}
   #credit a{color:var(--dim);text-decoration:underline}
 
+  /* ===== 모드 전환 바 =====
+     지도 클릭의 주인이 누구인지(측정/영역/보기)를 항상 보이게 둔다.
+     #panelBody 안에 두면 스크롤에 밀려나므로 헤더 아래에 고정한다. */
+  #modeBar{padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+  #modeRow{display:flex;gap:0}
+  #modeRow button{flex:1;border-radius:0;border-left-width:0;font-size:12px;padding:7px 4px}
+  #modeRow button:first-child{border-radius:8px 0 0 8px;border-left-width:1px}
+  #modeRow button:last-child{border-radius:0 8px 8px 0}
+  #modeRow button.on{background:var(--acc);border-color:var(--acc);color:#04121c}
+  #modeHint{font-size:10px;color:var(--dim);margin-top:5px;line-height:1.4}
+
+  /* ===== 영역·텍스트 목록 항목 ===== */
+  .item{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:7px 8px;margin-bottom:6px}
+  .item-head{display:flex;align-items:center;gap:6px}
+  .item input[type=text]{flex:1;min-width:0;padding:4px 6px;border-radius:6px;border:1px solid var(--line);
+                         background:var(--bg);color:var(--txt);font-size:12px}
+  .item .del{color:var(--danger);background:none;border:none;font-size:15px;padding:2px 5px;flex-shrink:0}
+  .item-row{display:flex;align-items:center;gap:8px;margin-top:5px;flex-wrap:wrap}
+  .item-row label{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--dim)}
+  .item-row input[type=color]{width:26px;height:20px;padding:0;border:1px solid var(--line);
+                              border-radius:4px;background:none}
+  .item-row input[type=range]{width:64px}
+  .item .mono{font-family:var(--mono);font-size:10px;margin-top:4px}
+
+  /* ===== 지도 위 라벨(영역 이름·독립 텍스트) =====
+     CustomOverlay 는 좌표에 고정되지만 크기는 화면 픽셀 고정이라, 줌아웃하면
+     서로 겹친다 — JS 에서 줌 레벨 임계값을 넘으면 숨긴다.
+     거리 라벨(.dist-label)과 달리 pointer-events 를 살려둔다. 드래그로 위치를
+     옮겨야 하기 때문이며, 그 대가로 라벨 위 클릭은 지점 추가로 가지 않는다. */
+  .map-label{font-size:12px;line-height:1.35;color:#fff;background:rgba(12,16,20,.78);
+             border:1px solid var(--line);border-radius:7px;padding:4px 7px;white-space:nowrap;
+             cursor:grab;user-select:none;-webkit-user-select:none;
+             text-shadow:0 1px 2px #000;box-shadow:0 2px 6px rgba(0,0,0,.5)}
+  .map-label.dragging{cursor:grabbing;opacity:.75}
+  .map-label b{display:block;font-size:13px;font-weight:800}
+  .map-label span{display:block;font-size:11px;color:#cfd8e2}
+  .map-label span.dim{color:var(--dim);font-family:var(--mono);font-size:10px}
+  .text-label{background:rgba(12,16,20,.6)}
+
+  /* 파일 드래그앤드롭 안내 */
+  #dropHint{position:absolute;inset:0;z-index:40;display:none;align-items:center;justify-content:center;
+            background:rgba(56,182,255,.12);border:3px dashed var(--acc);font-size:15px;font-weight:700;color:var(--acc)}
+  #dropHint.on{display:flex}
+
+  #importLog{font-size:10px;line-height:1.5;color:var(--acc2);max-height:120px;overflow-y:auto;margin-top:6px}
+
   /* 자체 점검 결과 오버레이 (?selfcheck=1) */
   #selfcheck{position:fixed;inset:0;z-index:300;background:#0b0f13;color:var(--txt);padding:20px;
              font-family:var(--mono);font-size:13px;line-height:1.7;white-space:pre-wrap;overflow:auto}
@@ -121,6 +170,18 @@
         <div class="sub">커버리지 · 좌표 · 거리 측정</div>
       </div>
     </div>
+
+    <!-- 모드 전환: 지도 클릭을 누가 가져갈지 정하는 유일한 스위치.
+         드로잉 매니저가 클릭을 자체적으로 가로채므로 측정과 배타여야 한다. -->
+    <div id="modeBar">
+      <div class="row" id="modeRow">
+        <button data-mode="measure" onclick="setMode('measure')">📏 측정</button>
+        <button data-mode="area"    onclick="setMode('area')">⬟ 영역</button>
+        <button data-mode="view"    onclick="setMode('view')">👁 보기</button>
+      </div>
+      <div id="modeHint">지도를 탭하면 측정 지점이 추가됩니다.</div>
+    </div>
+
     <div id="panelBody">
 
       <div class="card">
@@ -129,9 +190,12 @@
           <input id="searchInput" type="text" placeholder="장소명 또는 좌표"
             style="flex:1;min-width:0;padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-size:13px">
           <button class="primary small" onclick="doSearch()">검색</button>
+          <button class="small ghost" id="clearSearchBtn" onclick="clearSearchMarker(true)"
+                  style="display:none" title="지도 위치는 그대로 두고 마커만 제거">✕ 마커</button>
         </div>
         <div class="muted" style="font-size:10px;margin-top:5px">
-          장소명(예: 제주 애월읍사무소) 또는 좌표(예: 33.4011689, 126.3664674)
+          장소명(예: 화성시 능동 1053-1) 또는 좌표(예: 37.2176523, 127.0605514)<br>
+          검색 마커는 <b>마커를 클릭</b>하거나 ✕ 로 지웁니다 (측정 지점은 그대로)
         </div>
         <div id="searchResults" style="margin-top:6px"></div>
       </div>
@@ -179,6 +243,47 @@
       </div>
 
       <div class="card">
+        <h2>⬟ 영역 <span class="muted">(방목지 · 농장경계)</span></h2>
+        <div id="areaList"><div class="muted">‘영역’ 모드에서 지도를 클릭해 다각형을 그립니다.</div></div>
+        <div class="row" style="margin-top:6px">
+          <button class="primary small" onclick="setMode('area')">＋ 영역 그리기</button>
+          <button class="warn small" onclick="clearAreas()">전체 삭제</button>
+        </div>
+        <div class="muted" style="font-size:10px;margin-top:5px">
+          클릭으로 꼭짓점 추가 · 더블클릭(또는 우클릭)으로 닫기 · 라벨은 드래그로 이동<br>
+          잘못 그렸으면 닫은 뒤 목록에서 ✕ 로 지웁니다
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>🏷 텍스트</h2>
+        <div id="textList"><div class="muted">영역과 무관한 설명을 지도에 놓을 수 있습니다.</div></div>
+        <div class="row" style="margin-top:6px">
+          <button class="primary small" onclick="startPlaceText()">＋ 텍스트 놓기</button>
+          <button class="warn small" onclick="clearTexts()">전체 삭제</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>💾 저장 / 불러오기 <span class="muted">(GeoJSON)</span></h2>
+        <input id="ranchInput" type="text" placeholder="목장명 (파일 하나 = 목장 하나)"
+          style="width:100%;padding:7px;border-radius:7px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-size:12px"
+          oninput="saveLocal()">
+        <div class="row" style="margin-top:6px">
+          <button class="primary small" onclick="exportGeoJSON()">⬇ 내보내기</button>
+          <button class="small" onclick="document.getElementById('fileInput').click()">⬆ 불러오기</button>
+          <button class="small" onclick="fitAll()">🔍 전체 보기</button>
+          <button class="warn small" onclick="clearAll()">전체 초기화</button>
+        </div>
+        <input id="fileInput" type="file" accept=".geojson,.json,application/geo+json,application/json"
+               style="display:none" onchange="onFilePick(this)">
+        <div class="muted" style="font-size:10px;margin-top:5px">
+          지도에 파일을 끌어다 놓아도 불러옵니다 · 작업은 자동저장되어 새로고침해도 남습니다
+        </div>
+        <div id="importLog"></div>
+      </div>
+
+      <div class="card">
         <h2>⚙️ 지도</h2>
         <div class="row" id="mapTypeRow">
           <button class="small" data-type="skyview" onclick="setMapType('skyview')">스카이뷰</button>
@@ -217,6 +322,7 @@
       </button>
     </div>
     <div id="map"></div>
+    <div id="dropHint">GeoJSON 파일을 놓으면 불러옵니다</div>
     <div id="mapErr">
       <div>
         <b>지도를 불러오지 못했습니다.</b><br>
@@ -234,15 +340,46 @@
 
 <!-- 카카오 앱키는 클라이언트 노출형이 정상 사용법이다(도메인 화이트리스트로 보호).
      autoload=false + kakao.maps.load() 로 로딩 완료 시점을 직접 잡는다.
-     libraries=services 가 있어야 장소/주소 검색(Places·Geocoder)이 붙는다. -->
-<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=8a9487650e75ea74fa48a17b9ed951ba&libraries=services&autoload=false"></script>
+     libraries=services 가 있어야 장소/주소 검색(Places·Geocoder)이 붙고,
+     drawing 이 있어야 영역(다각형) 그리기가 붙는다. -->
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=8a9487650e75ea74fa48a17b9ed951ba&libraries=services,drawing&autoload=false"></script>
 <script>
 let map, gps=null, gpsMarker=null, gpsCircle=null;
 let pts=[], markers=[], circles=[], segLabels=[], line=null;
 let rubberLine=null, rubberLabel=null;
 let watchId=null, places=null, geocoder=null;
 
+/* 영역·텍스트는 기존 pts/markers/circles 처럼 병렬 배열로 늘리지 않는다.
+   병렬 배열은 삭제할 때마다 인덱스를 세 군데 맞춰야 해서(delPt 참조) 항목이
+   늘수록 깨지기 쉽다. 처음부터 id 를 가진 객체 배열로 잡는다. */
+let areas=[];   // {id, path:[{lat,lng}], name, desc, style:{fillColor,strokeColor,opacity}, labelPos, polygon, label}
+let texts=[];   // {id, pos:{lat,lng}, text, fontSize, overlay}
+let areaSeq=0, textSeq=0;
+let drawingManager=null, pendingText=false;
+
+/* 겹침 순서. 영역은 배경, 커버리지 원과 경로는 그 위, 라벨은 항상 최상단.
+   숫자를 이 표 밖에서 직접 쓰지 않는다 — 한 곳만 보면 순서가 파악되도록. */
+const Z={area:1, circle:2, route:3, distLabel:5, areaLabel:6, textLabel:7};
+
+const DEF_FILL='#4cd07d', DEF_STROKE='#4cd07d';
+
+/* 기본 지도 중심 — 에스제이아이티(경기 화성시 능동 1053-1 / 동탄하나1길 54-11).
+   위치권한이 없거나 거부됐을 때만 쓰인다(권한이 있으면 현재 위치가 이긴다).
+   ponytail: OpenStreetMap 에 건물 노드가 없어 '동탄하나1길' 도로 중심선 좌표를
+   썼다. 도로 단위(수십 m)까지만 맞으므로 level 4 에서 회사가 화면 안에는 들어온다.
+   정확한 건물 좌표가 필요해지면 앱의 장소검색으로 확인해 이 값을 바꾸면 된다. */
+const DEFAULT_CENTER={lat:37.2176523, lng:127.0605514};
+
 const fmt = v => v.toFixed(7);
+
+/* 불러온 파일의 이름·설명이 그대로 innerHTML 로 들어간다 — 이스케이프 없이는
+   GeoJSON 하나로 스크립트가 실행된다. 신뢰 경계에서 게으르지 않는다. */
+const ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>ESC_MAP[c]);
+
+/* 색은 CSS 로 흘러가므로 형식을 통과시키지 않으면 스타일 주입이 된다. */
+const COLOR_RE=/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+const safeColor = (c,def) => COLOR_RE.test(String(c||'')) ? String(c) : def;
 
 /* ---------- 지점별 색상 팔레트 ---------- */
 const PALETTE=['#38b6ff','#ff6b6b','#4cd07d','#ffc53d','#b28dff','#ff9f43','#00d2d3','#ff7eb3','#7bed9f','#e84393'];
@@ -294,22 +431,44 @@ function selfcheck(){
 }
 if(new URLSearchParams(location.search).has('selfcheck')) selfcheck();
 
-/* ---------- 지점 지정 모드 (우클릭/길게누르기 = 종료) ---------- */
-let measuring=true;
+/* ---------- 모드 (측정 / 영역 / 보기) ----------
+   원래는 measuring 불리언 하나가 지도 클릭을 독점했다. 영역 그리기가 들어오면
+   같은 클릭이 꼭짓점 찍기가 되어야 하는데, 드로잉 매니저는 클릭을 자체적으로
+   가로챈다 — 그래서 불리언을 3-way 로 "교체"하고(추가가 아니다) 매니저의
+   select/cancel 을 이 함수 한 곳에서만 부른다. 배타 처리를 여기 몰아두지 않으면
+   "측정이 안 되는" 증상이 호출부마다 재발한다. */
+const MODE_HINT={
+  measure:'지도를 탭하면 측정 지점이 추가됩니다.',
+  area:'클릭으로 꼭짓점 추가 · 더블클릭(또는 우클릭)으로 영역을 닫습니다.',
+  view:'보기 모드 — 지도 클릭이 무시됩니다. 라벨 드래그는 됩니다.'
+};
+let mode='measure';
+const measuringNow = () => mode==='measure';
+
+function setMode(m){
+  if(!MODE_HINT[m]) return;
+  mode=m;
+  if(m!=='measure') hideRubber();
+  if(m!=='view') pendingText=false;
+  // 드로잉 매니저가 살아있으면 클릭 주인이 바뀐다. 영역 모드가 아닐 때 반드시
+  // cancel() 해야 측정 클릭이 되살아난다.
+  if(drawingManager){
+    if(m==='area') drawingManager.select(kakao.maps.drawing.OverlayType.POLYGON);
+    else drawingManager.cancel();
+  }
+  document.querySelectorAll('#modeRow button').forEach(b=>b.classList.toggle('on', b.dataset.mode===m));
+  document.getElementById('modeHint').textContent=MODE_HINT[m];
+  setMeasureUI();
+}
 function setMeasureUI(){
   const b=document.getElementById('measureBtn');
-  if(b) b.textContent=measuring?'✋ 지정 종료':'▶ 지정 재개';
+  if(b) b.textContent=measuringNow()?'✋ 지정 종료':'▶ 지정 재개';
 }
-function toggleMeasure(){
-  measuring=!measuring;
-  if(!measuring) hideRubber();
-  setMeasureUI();
-  toast(measuring?'지점 지정 재개 — 지도를 탭하세요':'지점 지정 종료');
-}
+function toggleMeasure(){ setMode(measuringNow()?'view':'measure'); }
 function finishMeasure(){
-  if(!measuring) return;
-  measuring=false; hideRubber(); setMeasureUI();
-  toast('지점 지정 종료 (재개: 패널의 ▶ 버튼)');
+  if(!measuringNow()) return;
+  setMode('view');
+  toast('지점 지정 종료 (재개: 상단 📏 측정)');
 }
 
 /* ---------- 좌표 변환 헬퍼 ----------
@@ -340,7 +499,7 @@ function radiusOn(){ return document.getElementById('radiusToggle').checked; }
 function makeCircle(lat,lng,i){
   const c=colorOf(i);
   const circle=new kakao.maps.Circle({
-    center:LL({lat,lng}), radius:radiusVal(),
+    center:LL({lat,lng}), radius:radiusVal(), zIndex:Z.circle,
     fillColor:c, fillOpacity:.13,
     strokeColor:c, strokeOpacity:.85, strokeWeight:1.5});
   // 카카오 Circle 에는 setVisible 이 없다 — 표시/숨김은 setMap(map|null) 로 한다.
@@ -350,6 +509,7 @@ function makeCircle(lat,lng,i){
 function applyRadius(){
   const r=radiusVal(), on=radiusOn();
   circles.forEach(c=>{ c.setRadius(r); c.setMap(on?map:null); });
+  saveLocal();   // 반경은 사용자가 정한 값이라 반드시 남긴다(계산값과 다르다)
 }
 
 /* ---------- 거리 라벨 (지도 위 텍스트) ----------
@@ -361,7 +521,7 @@ function makeDistLabel(pos, text, color){
   el.style.color=color||'#4cd07d';
   el.textContent=text;
   const ov=new kakao.maps.CustomOverlay({
-    position:LL(pos), content:el, xAnchor:.5, yAnchor:.5, zIndex:5});
+    position:LL(pos), content:el, xAnchor:.5, yAnchor:.5, zIndex:Z.distLabel});
   ov.setMap(map);
   ov.el=el;
   return ov;
@@ -400,14 +560,26 @@ function undoPt(){
 
 /* ---------- 장소/좌표 검색 ---------- */
 let searchMarker=null, searchResultsData=[];
-function clearSearchMarker(){
+/* 검색 마커는 "여기를 찾았다"는 안내일 뿐 측정 데이터가 아니다(GeoJSON 에도 안
+   들어간다). 확인한 뒤엔 시야만 가리므로 지우는 길을 열어둔다 — 지도 중심·줌은
+   건드리지 않아 찾아간 자리는 그대로 남는다. */
+function clearSearchMarker(byUser){
   if(searchMarker){ searchMarker.setMap(null); searchMarker=null; }
+  const b=document.getElementById('clearSearchBtn');
+  if(b) b.style.display='none';
+  if(byUser) toast('검색 마커를 지웠습니다 (지도 위치는 그대로)');
 }
 function showSearchAt(lat,lng,label){
-  clearPts();            // 기존 측정 지점/거리 초기화
+  // 예전에는 여기서 clearPts() 로 측정 지점을 통째로 지웠다. 자동저장이 붙은
+  // 지금은 그 삭제가 localStorage 까지 덮어써 작업이 사라진다 — 검색은 화면을
+  // 옮기는 동작일 뿐이므로 데이터를 건드리지 않는다. 초기화는 '전체 초기화'로.
   clearSearchMarker();
   searchMarker=new kakao.maps.Marker({position:LL({lat,lng}), title:label||'검색 위치'});
   searchMarker.setMap(map);
+  // 마커 자체를 눌러도 지워지게 한다(버튼까지 가지 않아도 되도록)
+  kakao.maps.event.addListener(searchMarker,'click', ()=>clearSearchMarker(true));
+  const b=document.getElementById('clearSearchBtn');
+  if(b) b.style.display='';
   map.panTo(LL({lat,lng}));
   map.setLevel(3);       // 카카오 level 은 작을수록 확대 — 3 이면 건물이 구분되는 배율
   if(label) toast('📍 '+label);
@@ -461,6 +633,525 @@ function pickResult(i){
   document.getElementById('searchResults').innerHTML='';
 }
 
+/* ================= 영역(폴리곤) · 텍스트 · GeoJSON =================== */
+
+/* ---------- 면적 ----------
+   ponytail: 위경도를 이 위도 기준 등거리 평면으로 근사 투영한 뒤 신발끈 공식.
+   구면 초과를 무시하므로 수 km 규모 방목지에서 오차는 0.1% 미만이고, 수십 km
+   짜리를 재게 되면 측지 면적(Karney)으로 교체한다.
+   면적은 좌표에서 매번 다시 계산한다 — 저장하면 꼭짓점을 옮겼을 때 어긋난다. */
+function polyArea(path){
+  if(!path || path.length<3) return 0;
+  const rad=Math.PI/180;
+  const lat0=path.reduce((s,p)=>s+p.lat,0)/path.length*rad;
+  const xy=path.map(p=>({x:EARTH_R*Math.cos(lat0)*p.lng*rad, y:EARTH_R*p.lat*rad}));
+  let a=0;
+  for(let i=0,n=xy.length;i<n;i++){ const j=(i+1)%n; a+=xy[i].x*xy[j].y-xy[j].x*xy[i].y; }
+  return Math.abs(a/2);
+}
+function fmtArea(m2){
+  return m2>=10000 ? (m2/10000).toFixed(2)+' ha' : Math.round(m2).toLocaleString()+' ㎡';
+}
+function centroidOf(path){
+  // ponytail: 단순 평균이라 오목한 도형에서는 중심이 도형 밖으로 나간다.
+  // 자동배치를 정교하게 만들지 않고 첫 위치만 잡아준 뒤 드래그로 해결한다.
+  const n=path.length;
+  return {lat:path.reduce((s,p)=>s+p.lat,0)/n, lng:path.reduce((s,p)=>s+p.lng,0)/n};
+}
+
+/* ---------- 드래그 가능한 지도 라벨 ----------
+   CustomOverlay 에는 드래그 기능이 없다. 라벨 DOM 에서 포인터를 잡고 지도
+   투영으로 픽셀→좌표를 되돌린다. 드래그 중에는 지도 자체가 같이 끌려가므로
+   setDraggable/setZoomable 을 꺼야 한다. */
+function makeDraggableLabel(pos, el, zIndex, onMoved){
+  const ov=new kakao.maps.CustomOverlay({position:LL(pos), content:el, xAnchor:.5, yAnchor:.5, zIndex});
+  ov.setMap(map);
+  ov.el=el;
+  const mapEl=document.getElementById('map');
+  let dragging=false;
+  const pointOf=e=>{
+    const t=(e.touches && e.touches[0]) || e;
+    const r=mapEl.getBoundingClientRect();
+    return new kakao.maps.Point(t.clientX-r.left, t.clientY-r.top);
+  };
+  const move=e=>{
+    if(!dragging) return;
+    e.preventDefault();
+    ov.setPosition(map.getProjection().coordsFromContainerPoint(pointOf(e)));
+  };
+  const up=()=>{
+    if(!dragging) return;
+    dragging=false;
+    map.setDraggable(true); map.setZoomable(true);
+    el.classList.remove('dragging');
+    document.removeEventListener('mousemove',move);
+    document.removeEventListener('mouseup',up);
+    document.removeEventListener('touchmove',move);
+    document.removeEventListener('touchend',up);
+    onMoved(toPt(ov.getPosition()));
+  };
+  const down=e=>{
+    if(dragging) return;
+    dragging=true;
+    map.setDraggable(false); map.setZoomable(false);
+    el.classList.add('dragging');
+    e.stopPropagation();
+    document.addEventListener('mousemove',move);
+    document.addEventListener('mouseup',up);
+    document.addEventListener('touchmove',move,{passive:false});
+    document.addEventListener('touchend',up);
+  };
+  el.addEventListener('mousedown',down);
+  el.addEventListener('touchstart',down,{passive:true});
+  return ov;
+}
+
+/* 줌아웃하면 라벨이 서로 겹쳐 못 읽는다. CustomOverlay 는 화면 픽셀 고정
+   크기라 축소해도 작아지지 않으므로, 임계 레벨을 넘으면 통째로 숨긴다.
+   (카카오 level 은 숫자가 클수록 축소) */
+const LABEL_MAX_LEVEL=6;
+function applyLabelVisibility(){
+  const on = map.getLevel()<=LABEL_MAX_LEVEL;
+  areas.forEach(a=>a.label.setMap(on?map:null));
+  texts.forEach(t=>t.overlay.setMap(on?map:null));
+}
+
+/* ---------- 영역 ---------- */
+function addArea(o){
+  const a={
+    id:++areaSeq,
+    path:o.path,
+    name:o.name || ('영역 '+(areas.length+1)),
+    desc:o.desc || '',
+    style:o.style || {fillColor:DEF_FILL, strokeColor:DEF_STROKE, opacity:.3},
+    labelPos:o.labelPos || centroidOf(o.path)
+  };
+  a.polygon=new kakao.maps.Polygon({
+    path:a.path.map(LL), zIndex:Z.area,
+    fillColor:a.style.fillColor, fillOpacity:a.style.opacity,
+    strokeColor:a.style.strokeColor, strokeOpacity:.9, strokeWeight:2});
+  a.polygon.setMap(map);
+  const el=document.createElement('div');
+  el.className='map-label area-label';
+  a.label=makeDraggableLabel(a.labelPos, el, Z.areaLabel, p=>{ a.labelPos=p; saveLocal(); });
+  paintAreaLabel(a);
+  areas.push(a);
+  renderAreas(); applyLabelVisibility(); saveLocal();
+  return a;
+}
+function paintAreaLabel(a){
+  const el=a.label.el;
+  el.style.borderColor=a.style.strokeColor;
+  el.innerHTML='<b>'+esc(a.name)+'</b>'
+    + (a.desc ? '<span>'+esc(a.desc)+'</span>' : '')
+    + '<span class="dim">'+fmtArea(polyArea(a.path))+'</span>';
+}
+function editArea(id,k,v){
+  const a=areas.find(x=>x.id===id);
+  if(!a) return;
+  if(k==='name')            a.name=String(v).slice(0,60);
+  else if(k==='desc')       a.desc=String(v).slice(0,300);
+  else if(k==='fillColor'){ a.style.fillColor=safeColor(v,DEF_FILL);     a.polygon.setOptions({fillColor:a.style.fillColor}); }
+  else if(k==='strokeColor'){a.style.strokeColor=safeColor(v,DEF_STROKE);a.polygon.setOptions({strokeColor:a.style.strokeColor}); }
+  else if(k==='opacity'){   a.style.opacity=Math.min(1,Math.max(0,parseFloat(v)||0)); a.polygon.setOptions({fillOpacity:a.style.opacity}); }
+  paintAreaLabel(a);
+  // 여기서 renderAreas() 를 부르면 입력 중인 칸이 다시 그려지며 포커스가 날아간다.
+  saveLocal();
+}
+function delArea(id){
+  const i=areas.findIndex(x=>x.id===id);
+  if(i<0) return;
+  areas[i].polygon.setMap(null);
+  areas[i].label.setMap(null);
+  areas.splice(i,1);
+  renderAreas(); saveLocal();
+}
+/* silent = 불러오기처럼 내부에서 비울 때. 버튼으로 눌렀을 때는 반드시 결과를
+   말해준다 — 아무 반응이 없으면 고장인지 빈 상태인지 구분할 수 없다. */
+function clearAreas(silent){
+  const n=areas.length;
+  areas.forEach(a=>{ a.polygon.setMap(null); a.label.setMap(null); });
+  areas=[];
+  clearManagerOverlays();   // 매니저 쪽에 남은 사본까지 같이 지운다
+  renderAreas(); saveLocal();
+  if(!silent) toast(n ? ('영역 '+n+'개를 삭제했습니다') : '삭제할 영역이 없습니다');
+}
+function renderAreas(){
+  const el=document.getElementById('areaList');
+  if(!areas.length){ el.innerHTML='<div class="muted">‘영역’ 모드에서 지도를 클릭해 다각형을 그립니다.</div>'; return; }
+  el.innerHTML=areas.map(a=>`<div class="item">
+    <div class="item-head">
+      <input type="text" value="${esc(a.name)}" maxlength="60" oninput="editArea(${a.id},'name',this.value)">
+      <button class="del" onclick="delArea(${a.id})">✕</button>
+    </div>
+    <div class="item-row">
+      <input type="text" value="${esc(a.desc)}" maxlength="300" placeholder="설명(선택)" oninput="editArea(${a.id},'desc',this.value)">
+    </div>
+    <div class="item-row">
+      <label>채움<input type="color" value="${esc(a.style.fillColor)}" oninput="editArea(${a.id},'fillColor',this.value)"></label>
+      <label>선<input type="color" value="${esc(a.style.strokeColor)}" oninput="editArea(${a.id},'strokeColor',this.value)"></label>
+      <label>투명도<input type="range" min="0" max="1" step="0.05" value="${a.style.opacity}" oninput="editArea(${a.id},'opacity',this.value)"></label>
+    </div>
+    <div class="muted mono">${fmtArea(polyArea(a.path))} · 꼭짓점 ${a.path.length}개</div>
+  </div>`).join('');
+}
+
+/* ---------- 드로잉 매니저 ----------
+   그리기 제스처만 라이브러리에 맡기고, 결과는 곧바로 우리 areas[] 로 옮긴다.
+   매니저가 만든 오버레이를 그대로 두면 같은 도형이 두 번 그려지고 스타일·삭제·
+   내보내기가 두 곳으로 갈린다. */
+function initDrawing(){
+  if(!(kakao.maps.drawing && kakao.maps.drawing.DrawingManager)){
+    // 라이브러리가 안 붙어도 측정 기능은 살아있어야 한다. 영역 모드만 막는다.
+    const b=document.querySelector('#modeRow button[data-mode="area"]');
+    if(b){ b.disabled=true; b.title='드로잉 라이브러리를 불러오지 못했습니다'; }
+    return;
+  }
+  drawingManager=new kakao.maps.drawing.DrawingManager({
+    map:map,
+    drawingMode:[kakao.maps.drawing.OverlayType.POLYGON],
+    guideTooltip:['draw','edit'],
+    polygonOptions:{draggable:false, removable:false, editable:false,
+      strokeColor:DEF_STROKE, fillColor:DEF_FILL, fillOpacity:.3, strokeWeight:2}
+  });
+  onDM('drawend', onDrawEnd);
+}
+/* 드로잉 매니저 이벤트 등록.
+   공식 undo 샘플은 manager.addListener() 를 쓴다 — 지도 오버레이용 공통 버스인
+   kakao.maps.event.addListener 로는 안 걸릴 수 있어 매니저 자체 API 를 먼저 쓴다. */
+function onDM(evt, fn){
+  if(typeof drawingManager.addListener==='function') drawingManager.addListener(evt, fn);
+  else kakao.maps.event.addListener(drawingManager, evt, fn);
+}
+/* 드로잉 라이브러리가 돌려주는 좌표 표기가 버전에 따라 {x:경도,y:위도} 와
+   LatLng 두 가지로 갈린다. SDK 경계에서 한 번만 흡수한다. */
+function normPath(raw){
+  if(!Array.isArray(raw)) return [];
+  return raw.map(c=>{
+    if(!c) return null;
+    if(typeof c.getLat==='function') return {lat:c.getLat(), lng:c.getLng()};
+    if(isFinite(c.y) && isFinite(c.x))     return {lat:+c.y,   lng:+c.x};
+    if(isFinite(c.lat) && isFinite(c.lng)) return {lat:+c.lat, lng:+c.lng};
+    return null;
+  }).filter(p=>p && Math.abs(p.lat)<=90 && Math.abs(p.lng)<=180);
+}
+/* 매니저가 지금까지 그린 폴리곤 목록.
+   drawend 콜백 인자의 구조는 카카오 문서에 정의돼 있지 않다(메서드·이벤트
+   이름만 나열돼 있음). 반면 getData() 는 반환 구조가 공식 샘플로 확정돼 있다
+   — data[POLYGON] = [{points:[{x:경도, y:위도}], options:{...}}].
+   그래서 콜백 인자를 믿지 않고 항상 getData() 에서 읽는다. */
+function drawnPolygons(){
+  if(!drawingManager) return [];
+  const d=drawingManager.getData();
+  return (d && d[kakao.maps.drawing.OverlayType.POLYGON]) || [];
+}
+/* 매니저가 만든 사본은 우리 areas[] 와 중복이라 반드시 지운다. 남겨두면 같은
+   도형이 두 번 그려지고, 우리 쪽만 지우는 '전체 삭제'가 안 먹은 것처럼 보인다.
+   ponytail: remove()/getOverlays() 는 인자·반환 구조가, undo() 는 취소 단위가
+   카카오 문서에 없다. 어느 하나를 믿지 않고 순서대로 시도한 뒤 getData() 로
+   실제로 줄었는지 확인한다 — 조용히 실패하면 화면에만 도형이 남는다. */
+function clearManagerOverlays(){
+  if(!drawingManager) return true;
+  if(!drawnPolygons().length) return true;
+
+  // (1) remove(): 오버레이 객체를 넘겨야 하는 것으로 보이나 문서에 없어 방어적으로 시도
+  try{
+    const ovs=drawingManager.getOverlays && drawingManager.getOverlays();
+    const list=(ovs && (ovs[kakao.maps.drawing.OverlayType.POLYGON] || ovs.polygon)) || [];
+    Array.prototype.slice.call(list).forEach(o=>{
+      try{ drawingManager.remove(o); }catch(e){}
+    });
+  }catch(e){}
+
+  // (2) undo() 되감기 (undoable() 이 계속 true 를 주는 경우를 대비해 상한을 둔다)
+  let guard=100;
+  while(guard-- > 0 && drawnPolygons().length
+        && drawingManager.undoable && drawingManager.undoable() && drawingManager.undo){
+    drawingManager.undo();
+  }
+
+  const left=drawnPolygons().length;
+  if(left) showImportLog(['드로잉 매니저에 그린 도형 '+left+'개가 남아 있습니다 — '
+    +'화면에 같은 영역이 겹쳐 보일 수 있습니다']);
+  return !left;
+}
+function onDrawEnd(){
+  const polys=drawnPolygons();
+  const last=polys[polys.length-1];
+  const path=normPath(last && (last.points || last.coordPath));
+  clearManagerOverlays();
+  if(path.length<3){
+    // 조용히 넘어가면 "그렸는데 아무 일도 안 난다"가 된다 — 원인을 화면에 남긴다.
+    toast('영역을 읽지 못했습니다 (꼭짓점 '+path.length+'개)');
+    showImportLog(['드로잉 결과에서 좌표를 얻지 못했습니다. '
+      +'getData() 폴리곤 '+polys.length+'개 / 추출 꼭짓점 '+path.length+'개']);
+  }else{
+    addArea({path});
+    toast('영역 추가됨 — 패널에서 이름·색을 지정하세요');
+  }
+  // 연속으로 여러 개 그릴 수 있게 다시 그리기 대기 상태로 둔다
+  if(mode==='area') drawingManager.select(kakao.maps.drawing.OverlayType.POLYGON);
+}
+
+/* ---------- 독립 텍스트 ---------- */
+function startPlaceText(){
+  // 드로잉 매니저가 클릭을 쥐고 있으면 텍스트를 놓을 수 없다 — 보기 모드로 내린다.
+  setMode('view');
+  pendingText=true;
+  document.getElementById('modeHint').textContent='텍스트를 놓을 위치를 지도에서 클릭하세요.';
+  toast('텍스트를 놓을 위치를 클릭하세요');
+}
+function addText(pos,o){
+  o=o||{};
+  const t={id:++textSeq, pos, text:o.text||'설명', fontSize:o.fontSize||14};
+  const el=document.createElement('div');
+  el.className='map-label text-label';
+  t.overlay=makeDraggableLabel(pos, el, Z.textLabel, p=>{ t.pos=p; saveLocal(); });
+  paintText(t);
+  texts.push(t);
+  renderTexts(); applyLabelVisibility(); saveLocal();
+  return t;
+}
+function paintText(t){
+  t.overlay.el.style.fontSize=t.fontSize+'px';
+  t.overlay.el.textContent=t.text;   // textContent 라 이스케이프 불필요
+}
+function editText(id,k,v){
+  const t=texts.find(x=>x.id===id);
+  if(!t) return;
+  if(k==='text') t.text=String(v).slice(0,200);
+  else if(k==='fontSize') t.fontSize=Math.min(48,Math.max(8,parseInt(v,10)||14));
+  paintText(t); saveLocal();
+}
+function delText(id){
+  const i=texts.findIndex(x=>x.id===id);
+  if(i<0) return;
+  texts[i].overlay.setMap(null);
+  texts.splice(i,1);
+  renderTexts(); saveLocal();
+}
+function clearTexts(silent){
+  const n=texts.length;
+  texts.forEach(t=>t.overlay.setMap(null));
+  texts=[];
+  renderTexts(); saveLocal();
+  if(!silent) toast(n ? ('텍스트 '+n+'개를 삭제했습니다') : '삭제할 텍스트가 없습니다');
+}
+function renderTexts(){
+  const el=document.getElementById('textList');
+  if(!texts.length){ el.innerHTML='<div class="muted">영역과 무관한 설명을 지도에 놓을 수 있습니다.</div>'; return; }
+  el.innerHTML=texts.map(t=>`<div class="item">
+    <div class="item-head">
+      <input type="text" value="${esc(t.text)}" maxlength="200" oninput="editText(${t.id},'text',this.value)">
+      <button class="del" onclick="delText(${t.id})">✕</button>
+    </div>
+    <div class="item-row">
+      <label>크기<input type="range" min="8" max="48" step="1" value="${t.fontSize}" oninput="editText(${t.id},'fontSize',this.value)"></label>
+    </div>
+  </div>`).join('');
+}
+
+/* ================= GeoJSON 내보내기 / 불러오기 =====================
+   저장 포맷을 자체 JSON 이 아니라 GeoJSON 으로 잡는 이유는 지도 엔진을 바꿔도
+   현장 데이터가 살아남아야 하기 때문이다(카카오 → 다른 엔진 이식 대비).
+   GeoJSON 표준에 원·텍스트 개념이 없어 Point + properties 로 쓴다. 우리 도구끼리
+   왕복되면 충분하고 외부 GIS 완전 호환은 범위 밖이다.
+   계산으로 나오는 값(거리·면적)은 저장하지 않는다 — 좌표를 옮겼을 때 어긋난
+   파일이 되기 때문. 반대로 반경은 사용자가 정한 값이라 반드시 저장한다. */
+const GJ_VERSION=1;
+const ranchName = () => document.getElementById('ranchInput').value.trim();
+
+function ringOf(path){
+  const r=path.map(p=>[p.lng,p.lat]);
+  // GeoJSON Polygon 의 링은 첫 점과 끝 점이 같아야 한다(닫힘)
+  if(r.length && (r[0][0]!==r[r.length-1][0] || r[0][1]!==r[r.length-1][1])) r.push(r[0].slice());
+  return r;
+}
+function buildGeoJSON(){
+  const feats=[], r=radiusVal();
+  pts.forEach((p,i)=>feats.push({type:'Feature',
+    geometry:{type:'Point', coordinates:[p.lng,p.lat]},
+    properties:{kind:'gw', radius:r, label:letterOf(i), color:colorOf(i)}}));
+  areas.forEach(a=>feats.push({type:'Feature',
+    geometry:{type:'Polygon', coordinates:[ringOf(a.path)]},
+    properties:{kind:'area', name:a.name, desc:a.desc,
+      fillColor:a.style.fillColor, strokeColor:a.style.strokeColor, opacity:a.style.opacity,
+      labelPos:[a.labelPos.lng, a.labelPos.lat]}}));
+  texts.forEach(t=>feats.push({type:'Feature',
+    geometry:{type:'Point', coordinates:[t.pos.lng,t.pos.lat]},
+    properties:{kind:'text', text:t.text, fontSize:t.fontSize}}));
+  // 경로는 GW 지점에서 파생되는 값이다. 외부 뷰어에서 선이 보이도록 내보내기에는
+  // 넣되, 불러올 때는 무시하고 지점에서 다시 그린다(중복 생성 방지).
+  if(pts.length>=2) feats.push({type:'Feature',
+    geometry:{type:'LineString', coordinates:pts.map(p=>[p.lng,p.lat])},
+    properties:{kind:'route'}});
+  const name=ranchName();
+  return {type:'FeatureCollection', name,
+    properties:{app:'BoviCareKorMap', version:GJ_VERSION, ranch:name,
+                created:new Date().toISOString().slice(0,10)},
+    features:feats};
+}
+function exportGeoJSON(){
+  const gj=buildGeoJSON();
+  if(!gj.features.length){ toast('저장할 내용이 없습니다'); return; }
+  const base=(gj.name||'bovicare').replace(/[^\w가-힣.-]+/g,'_').slice(0,40) || 'bovicare';
+  const fname=base+'_'+new Date().toISOString().slice(0,10)+'.geojson';
+  const url=URL.createObjectURL(new Blob([JSON.stringify(gj,null,2)],{type:'application/geo+json'}));
+  const a=document.createElement('a');
+  a.href=url; a.download=fname; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+  toast('내보냈습니다: '+fname);
+}
+
+/* ---------- 불러오기 검증 (신뢰 경계) ----------
+   손으로 고친 파일, 다른 버전 파일, 직접 건드린 localStorage 가 모두 여기로
+   들어온다. 조용히 깨지면 현장에서 원인을 못 찾으므로, 버린 항목마다 사유를
+   모아 화면에 남긴다. */
+const isNum = v => typeof v==='number' && isFinite(v);
+const okLng = v => isNum(v) && v>=-180 && v<=180;
+const okLat = v => isNum(v) && v>=-90  && v<=90;
+const coord = c => (Array.isArray(c) && okLng(c[0]) && okLat(c[1])) ? {lat:c[1], lng:c[0]} : null;
+const str   = (v,max) => typeof v==='string' ? v.slice(0,max) : '';
+const clampNum = (v,lo,hi,def) => isNum(v) ? Math.min(hi,Math.max(lo,v)) : def;
+
+function parseGeoJSON(obj){
+  const log=[], out={pts:[], radius:null, areas:[], texts:[], ranch:''};
+  if(!obj || typeof obj!=='object'){ log.push('JSON 객체가 아닙니다'); return {log,out}; }
+  if(obj.type!=='FeatureCollection') log.push("최상위 type 이 'FeatureCollection' 이 아닙니다 ("+String(obj.type)+') — 그래도 features 를 읽어봅니다');
+  if(!Array.isArray(obj.features)){ log.push('features 배열이 없습니다 — 불러오기 중단'); return {log,out}; }
+  out.ranch=str(obj.name || (obj.properties && obj.properties.ranch), 60);
+
+  obj.features.forEach((f,i)=>{
+    const at='['+i+'] ';
+    if(!f || typeof f!=='object' || !f.geometry || typeof f.geometry!=='object'){
+      log.push(at+'geometry 없음 — 건너뜀'); return;
+    }
+    const g=f.geometry;
+    const pr=(f.properties && typeof f.properties==='object') ? f.properties : {};
+    const kind=str(pr.kind,20);
+
+    if(g.type==='Point'){
+      const c=coord(g.coordinates);
+      if(!c){ log.push(at+'Point 좌표 형식/범위 오류 — 건너뜀'); return; }
+      if(kind==='text'){
+        out.texts.push({pos:c, text:str(pr.text,200)||'텍스트', fontSize:clampNum(pr.fontSize,8,48,14)});
+      }else{
+        // kind 가 비어도 Point 는 GW 지점으로 받는다(외부에서 만든 파일 수용)
+        out.pts.push(c);
+        const r=clampNum(pr.radius,1,100000,null);
+        if(r!==null){
+          if(out.radius===null) out.radius=r;
+          else if(r!==out.radius) log.push(at+'반경 '+r+' m 가 앞 지점과 달라 '+out.radius+' m 로 통일했습니다');
+        }
+      }
+    }else if(g.type==='Polygon'){
+      const ring=(Array.isArray(g.coordinates) && Array.isArray(g.coordinates[0])) ? g.coordinates[0] : null;
+      if(!ring){ log.push(at+'Polygon 링이 없습니다 — 건너뜀'); return; }
+      const path=ring.map(coord).filter(Boolean);
+      const dropped=ring.length-path.length;
+      // 닫힘점은 화면용 경로에서 뺀다(카카오 Polygon 이 자동으로 닫는다)
+      if(path.length>1 && path[0].lat===path[path.length-1].lat && path[0].lng===path[path.length-1].lng) path.pop();
+      if(dropped) log.push(at+'좌표 '+dropped+'개가 범위를 벗어나 제외됐습니다');
+      if(path.length<3){ log.push(at+'꼭짓점이 3개 미만 — 건너뜀'); return; }
+      out.areas.push({path,
+        name:str(pr.name,60)||'영역',
+        desc:str(pr.desc,300),
+        style:{fillColor:safeColor(pr.fillColor,DEF_FILL),
+               strokeColor:safeColor(pr.strokeColor,DEF_STROKE),
+               opacity:clampNum(pr.opacity,0,1,.3)},
+        labelPos:coord(pr.labelPos)});
+    }else if(g.type==='LineString'){
+      // 경로는 GW 지점에서 다시 그린다 — 파생값이라 신뢰하지 않는다
+    }else{
+      log.push(at+"지원하지 않는 geometry '"+String(g.type)+"' — 건너뜀");
+    }
+  });
+  return {log,out};
+}
+function applyParsed(out){
+  clearAreas(true); clearTexts(true); clearPts();
+  if(out.ranch) document.getElementById('ranchInput').value=out.ranch;
+  if(out.radius!==null) document.getElementById('radiusInput').value=out.radius;
+  out.pts.forEach(p=>addPt(p.lat,p.lng));
+  out.areas.forEach(a=>addArea(a));
+  out.texts.forEach(t=>addText(t.pos,t));
+  applyRadius();
+  // 불러온 내용이 화면 밖이면 아무것도 안 보여 실패로 오해한다 — 전체를 담아준다
+  fitAll(true);
+  setMode('view');
+}
+/* 이제 측위에 성공하면 지도가 현재 위치로 간다 — 복원된 작업이 멀리 있으면
+   화면 밖으로 밀린다. 되돌아갈 방법을 버튼으로 남긴다. */
+function fitAll(silent){
+  const all=[].concat(pts, texts.map(t=>t.pos), ...areas.map(a=>a.path));
+  if(!all.length){ if(!silent) toast('표시할 지점·영역·텍스트가 없습니다'); return; }
+  const b=new kakao.maps.LatLngBounds();
+  all.forEach(p=>b.extend(LL(p)));
+  map.setBounds(b);
+}
+function showImportLog(log){
+  const el=document.getElementById('importLog');
+  el.innerHTML = log.length
+    ? '<b>불러오기 알림 '+log.length+'건</b><br>'+log.map(esc).join('<br>')
+    : '';
+}
+function importGeoJSONText(txt){
+  let obj;
+  try{ obj=JSON.parse(txt); }
+  catch(e){ showImportLog(['JSON 파싱 실패: '+e.message]); toast('불러오기 실패 — JSON 형식이 아닙니다'); return; }
+  const {log,out}=parseGeoJSON(obj);
+  const n=out.pts.length+out.areas.length+out.texts.length;
+  if(!n){ showImportLog(log.concat(['읽을 수 있는 항목이 없습니다'])); toast('불러올 항목이 없습니다'); return; }
+  applyParsed(out);
+  showImportLog(log);
+  toast('불러왔습니다 — 지점 '+out.pts.length+' · 영역 '+out.areas.length+' · 텍스트 '+out.texts.length
+        +(log.length?' (알림 '+log.length+'건)':''));
+}
+function readFile(file){
+  if(!file) return;
+  if(file.size>8*1024*1024){ toast('파일이 너무 큽니다 (8MB 초과)'); return; }
+  const fr=new FileReader();
+  fr.onload=()=>importGeoJSONText(String(fr.result));
+  fr.onerror=()=>toast('파일을 읽지 못했습니다');
+  fr.readAsText(file);
+}
+function onFilePick(input){
+  readFile(input.files && input.files[0]);
+  input.value='';   // 같은 파일을 다시 골라도 change 가 걸리도록
+}
+function clearAll(){
+  if(!confirm('지점·영역·텍스트를 모두 지웁니다. 계속할까요?')) return;
+  clearAreas(true); clearTexts(true); clearPts();
+  toast('전체 초기화했습니다');
+  document.getElementById('importLog').innerHTML='';
+  saveLocal();
+}
+
+/* ---------- 자동저장 ----------
+   새로고침·실수로 탭을 닫아도 작업이 날아가지 않게 하는 보조수단.
+   내보내기와 같은 GeoJSON 을 쓰므로 포맷이 갈리지 않는다. */
+const LS_KEY='bovicarekormap.v1';
+let saveTimer=null;
+function saveLocal(){
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{
+    try{ localStorage.setItem(LS_KEY, JSON.stringify(buildGeoJSON())); }
+    catch(e){ /* 용량 초과·프라이빗 모드. 보조수단이라 조용히 넘어간다 */ }
+  },600);
+}
+function loadLocal(){
+  let raw;
+  try{ raw=localStorage.getItem(LS_KEY); }catch(e){ return; }
+  if(!raw) return;
+  let obj;
+  try{ obj=JSON.parse(raw); }catch(e){ return; }
+  // localStorage 도 사용자가 직접 고칠 수 있다 — 파일과 같은 검증을 태운다
+  const {out}=parseGeoJSON(obj);
+  if(!(out.pts.length || out.areas.length || out.texts.length)) return;
+  applyParsed(out);
+  toast('이전 작업을 복원했습니다');
+}
+
 /* ---------- 시작 ---------- */
 // 앱키 도메인 미등록·네트워크 차단으로 SDK 가 안 붙으면 빈 화면만 남는다.
 // 배포처(NAS·라즈베리파이)마다 origin 이 달라 실제로 가장 흔한 실패라, 원인을
@@ -475,23 +1166,37 @@ else showMapError();
 
 function initMap(){
   map=new kakao.maps.Map(document.getElementById('map'),{
-    // 기본 중심 = 용춘목장(제주 애월). GPS 를 못 잡는 데스크톱에서도 바로
-    // 현장을 보게 하려는 것이며, 측위에 성공하면 곧바로 현재 위치로 옮겨간다.
-    center:new kakao.maps.LatLng(33.4011689, 126.3664674),
+    // 위치권한을 못 받았을 때의 자리. 측위에 성공하면 곧바로 현재 위치로 옮겨간다.
+    center:LL(DEFAULT_CENTER),
     level:4
   });
   map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
   setMapType('skyview');   // 기본 = 스카이뷰(국내 최신 위성영상)
 
+  // 영역 모드에서는 드로잉 매니저가 클릭을 가져가 이 핸들러가 아예 안 불린다.
+  // 텍스트 놓기는 일회성이라 모드보다 먼저 본다.
   kakao.maps.event.addListener(map,'click', e=>{
-    if(!measuring) return;
     const p=toPt(e.latLng);
+    if(pendingText){
+      pendingText=false;
+      addText(p);
+      document.getElementById('modeHint').textContent=MODE_HINT[mode];
+      toast('텍스트 추가됨 — 패널에서 내용을 입력하세요');
+      return;
+    }
+    if(!measuringNow()) return;
     addPt(p.lat, p.lng); updateRubber(p);
   });
-  kakao.maps.event.addListener(map,'mousemove', e=>{ if(measuring) updateRubber(toPt(e.latLng)); });
+  kakao.maps.event.addListener(map,'mousemove', e=>{ if(measuringNow()) updateRubber(toPt(e.latLng)); });
   kakao.maps.event.addListener(map,'rightclick', finishMeasure);   // 우클릭/길게누르기 = 지정 종료
   // 카카오 지도에는 mouseout 이벤트가 없어 컨테이너 DOM 에서 직접 잡는다.
   document.getElementById('map').addEventListener('mouseleave', hideRubber);
+  // 줌이 바뀌면 라벨 겹침 여부가 달라진다
+  kakao.maps.event.addListener(map,'zoom_changed', applyLabelVisibility);
+
+  initDrawing();
+  initDropZone();
+  setMode('measure');
 
   places=new kakao.maps.services.Places();
   geocoder=new kakao.maps.services.Geocoder();
@@ -509,15 +1214,44 @@ function initMap(){
   kakao.maps.event.addListener(map,'tilesloaded', ()=>{ tilesOk=true; });
   setTimeout(()=>{ if(!tilesOk) showMapError(); }, 5000);
 
+  // 화면 위치 우선순위: 현재 위치 > 복원된 작업 범위 > 기본 중심(회사).
+  // loadLocal() 은 동기라 먼저 복원 범위를 잡아두고, 측위에 성공하면 그 위로
+  // 덮어쓴다(비동기라 자연히 나중에 온다). 위치권한이 없으면 복원 범위가 남는다.
+  loadLocal();
   locateMe();
 }
 
+/* GeoJSON 을 지도에 끌어다 놓아 불러온다. 파일선택 창을 거치지 않는 쪽이
+   현장에서 빠르다. */
+function initDropZone(){
+  const wrap=document.getElementById('mapWrap');
+  const hint=document.getElementById('dropHint');
+  const show=on=>hint.classList.toggle('on',on);
+  wrap.addEventListener('dragover', e=>{ e.preventDefault(); show(true); });
+  wrap.addEventListener('dragleave', e=>{ if(e.target===wrap||e.target===hint) show(false); });
+  wrap.addEventListener('drop', e=>{
+    e.preventDefault(); show(false);
+    readFile(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+  });
+}
+
 /* ---------- 현재 위치 ---------- */
-let centerOnFix=false;
+let centerOnFix=false, lowAccTried=false;
+
+/* 측위 실패는 갈래가 여러 개다(브라우저 권한 · OS 위치서비스 · 타임아웃).
+   토스트는 2초 만에 사라져 현장에서 원인을 못 잡으므로 카드에 남긴다. */
+function setGpsStatus(msg, isErr){
+  const el=document.getElementById('gpsAcc');
+  el.textContent=msg;
+  el.style.color=isErr?'var(--danger)':'';
+}
 function locateMe(){
-  if(!navigator.geolocation){ toast('이 기기는 GPS를 지원하지 않습니다'); return; }
+  if(!navigator.geolocation){ setGpsStatus('이 브라우저는 위치 기능을 지원하지 않습니다', true); return; }
   if(gps){ map.panTo(LL(gps)); if(map.getLevel()>4) map.setLevel(3); } // 즉시 이동 (마지막 확인 위치)
   centerOnFix=true; // 새 측위 완료 시 한 번 더 정확한 위치로 이동
+  lowAccTried=false;
+  setGpsStatus('측위 중…');
+  // 1차는 고정밀. 휴대폰에서는 이게 GPS 를 깨워 수 m 까지 잡는다.
   navigator.geolocation.getCurrentPosition(onPos, onPosErr,
     {enableHighAccuracy:true, timeout:10000, maximumAge:0});
 }
@@ -542,7 +1276,10 @@ function onPos(p){
   const acc=p.coords.accuracy;
   document.getElementById('gpsCoord').innerHTML=
     `위도 <b>${fmt(gps.lat)}</b><br>경도 <b>${fmt(gps.lng)}</b>`;
-  document.getElementById('gpsAcc').textContent=`정확도 ±${acc.toFixed(1)} m`;
+  // 숫자만 보면 오판한다. PC 는 Wi-Fi/IP 추정이라 수백 m 도 정상 범위이며,
+  // 그 값으로 커버리지를 재면 결론이 통째로 틀린다 — 한계를 같이 적는다.
+  setGpsStatus('정확도 ±'+acc.toFixed(1)+' m'
+    + (acc>100 ? ' · Wi-Fi/IP 추정으로 보입니다. 커버리지 측정은 현장에서 휴대폰 GPS 로 하세요.' : ''));
   if(!gpsMarker){
     const dot='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">'
       +'<circle cx="10" cy="10" r="7" fill="#38b6ff" stroke="#fff" stroke-width="2"/></svg>';
@@ -561,8 +1298,28 @@ function onPos(p){
   if(centerOnFix){ map.panTo(LL(gps)); if(map.getLevel()>4) map.setLevel(3); centerOnFix=false; }
   updateDist();
 }
+/* 코드별 조치가 완전히 다르다. "실패했습니다"만 띄우면 어디를 손봐야 할지
+   알 수 없어 권한만 계속 다시 누르게 된다. */
+const GEO_ERR={
+  1:'브라우저가 위치 권한을 거부했습니다. 주소창 왼쪽 자물쇠 → 위치 → 허용 후 새로고침하세요.',
+  2:'OS가 위치를 못 알려줍니다. 윈도우 설정 → 개인정보 및 보안 → 위치에서 '
+    +'‘위치 서비스’와 ‘데스크톱 앱이 위치에 액세스하도록 허용’을 켜세요.',
+  3:'시간이 초과됐습니다. 실내·유선랜 PC 는 측위가 오래 걸리거나 실패합니다.'
+};
 function onPosErr(e){
-  toast('위치 확인 실패: '+(e.code===1?'권한 거부됨 (브라우저 위치권한 허용 필요)':e.message));
+  // PC 에는 GPS 칩이 없어 고정밀 요청이 그대로 실패하는 일이 흔하다. Wi-Fi/IP
+  // 기반 저정밀로 한 번 더 물어본다 — 권한이 정상인데 안 잡히는 대부분이 여기서 붙는다.
+  if(!lowAccTried && (e.code===2 || e.code===3)){
+    lowAccTried=true;
+    setGpsStatus('정밀 측위 실패 — 저정밀로 재시도 중…');
+    navigator.geolocation.getCurrentPosition(onPos, onPosErr,
+      {enableHighAccuracy:false, timeout:20000, maximumAge:300000});
+    return;
+  }
+  const why=GEO_ERR[e.code] || ('알 수 없는 오류'+(e.message ? (' — '+e.message) : ''));
+  setGpsStatus('측위 실패(코드 '+e.code+') — '+why, true);
+  toast('위치 확인 실패 — 패널의 사유를 확인하세요');
+  console.warn('geolocation error', e.code, e.message);
 }
 
 /* ---------- 지점 선택 ---------- */
@@ -600,10 +1357,14 @@ function clearPts(){
   circles.forEach(c=>c.setMap(null));
   pts=[]; markers=[]; circles=[];
   hideRubber();
-  measuring=true; setMeasureUI(); // 전체 삭제 시 지정 모드 재개
+  setMode('measure');            // 전체 삭제 시 지정 모드 재개
   renderPts(); drawLine(); updateDist();
 }
 function renderPts(){
+  // 지점이 바뀌는 경로(addPt·delPt·clearPts·마커 드래그)가 모두 이 함수를 거친다.
+  // 자동저장을 호출부마다 넣는 대신 여기 한 곳에 건다. updateDist() 는 GPS 갱신
+  // 때도 불려서 저장이 헛돈다 — 그래서 이쪽이다.
+  saveLocal();
   const el=document.getElementById('ptList');
   if(!pts.length){ el.innerHTML='<div class="muted">지도를 탭하면 지점이 추가됩니다.</div>'; return; }
   el.innerHTML=pts.map((p,i)=>{
@@ -623,7 +1384,7 @@ function drawLine(){
   if(line) line.setMap(null);
   segLabels.forEach(l=>l.setMap(null)); segLabels=[];
   if(pts.length<2){ line=null; return; }
-  line=new kakao.maps.Polyline({path:pts.map(LL), strokeColor:'#ffc53d',
+  line=new kakao.maps.Polyline({path:pts.map(LL), strokeColor:'#ffc53d', zIndex:Z.route,
     strokeWeight:3, strokeOpacity:.9, strokeStyle:'solid'});
   line.setMap(map);
   // 각 구간 중앙에 거리 표시
