@@ -117,6 +117,40 @@ location ~* \.(md|sh|gitignore|gitattributes|test\.js)$ {
 }
 ```
 
+**(4) 위치(geolocation) 허용** — 이게 없으면 GPS 기능이 **통째로 죽는다.**
+
+`conf.d/security.conf` 등에 아래 헤더가 있으면 브라우저 권한·HTTPS·OS 설정이 모두 정상이어도 측위가 무조건 실패한다. `geolocation=()` 는 빈 허용목록 = 전면 차단이다.
+
+```nginx
+add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;   # ← GPS 죽음
+```
+
+`$uri` 로 값만 갈라 이 도구에서만 허용한다.
+
+```nginx
+map $uri $geolocation_policy {
+    default                    "geolocation=()";
+    ~^/bovicare-gmapkakao/     "geolocation=(self)";
+}
+
+add_header Permissions-Policy "${geolocation_policy}, microphone=(), camera=()" always;
+```
+
+> **`add_header` 를 server·location 블록에 넣어 고치지 말 것.** nginx 는 하위 블록에
+> `add_header` 가 하나라도 있으면 **상위 블록의 `add_header` 를 전부 무효화**한다.
+> 그 경로에서만 HSTS·X-Frame-Options 등 나머지 헤더가 조용히 사라진다.
+> `add_header` 는 한 곳에만 두고 값을 변수로 가른다.
+>
+> `self` = 같은 오리진 문서만 허용. 서드파티 iframe 은 계속 차단되고 브라우저 권한
+> 프롬프트도 그대로 뜬다.
+
+**진단 요령**: 이 헤더로 막히면 브라우저는 `code 1 (PERMISSION_DENIED)` 을 준다 —
+사용자 거부와 코드가 같아서 권한 화면만 계속 확인하게 된다. 헤더부터 본다.
+
+```bash
+curl -sI https://yepark.co.kr/bovicare-gmapkakao/ | grep -i permissions-policy
+```
+
 > `test\.js` 는 `*.test.js` 만 막는다 — 서비스 코드인 일반 `.js` 는 그대로 서빙된다.
 > 이 레포는 빌드가 없어 개발용 파일이 웹루트에 그대로 놓이므로, **파일을 추가할 때
 > 서비스에 필요한 것인지 먼저 따진다.** 아니면 이 목록에 확장자를 추가한다.
@@ -167,6 +201,15 @@ done
 | `/bovicare-gmapkakao/selfcheck.test.js` | **404** |
 | `/bovicare-gmapkakao/.git/config` | **404** |
 | `/webpage-kakaomap-coverage/` | **404** |
+
+위치 기능은 헤더로 따로 확인한다 — 이건 200/404 로는 안 잡힌다.
+
+```bash
+curl -sI https://yepark.co.kr/bovicare-gmapkakao/ | grep -i permissions-policy
+# 기대: Permissions-Policy: geolocation=(self), microphone=(), camera=()
+curl -sI https://yepark.co.kr/ | grep -i permissions-policy
+# 기대: geolocation=()  ← 다른 사이트는 차단 유지
+```
 
 ### 3.4 서버를 새로 세팅하거나 웹서버를 교체하면
 

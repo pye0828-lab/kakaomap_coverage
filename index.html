@@ -1190,7 +1190,8 @@ function loadLocal(){
   const {out}=parseGeoJSON(obj);
   if(!(out.pts.length || out.areas.length || out.texts.length)) return;
   applyParsed(out);
-  toast('이전 작업을 복원했습니다');
+  // 화면이 작업 위치에 머무는 게 의도라는 걸 알려주고, 내 위치로 가는 길도 같이 준다
+  toast('이전 작업을 복원했습니다 — 내 위치로 가려면 “위치 갱신”');
 }
 
 /* ---------- 시작 ---------- */
@@ -1258,11 +1259,15 @@ function initMap(){
   kakao.maps.event.addListener(map,'tilesloaded', ()=>{ tilesOk=true; });
   setTimeout(()=>{ if(!tilesOk) showMapError(); }, 5000);
 
-  // 화면 위치 우선순위: 현재 위치 > 복원된 작업 범위 > 기본 중심(회사).
-  // loadLocal() 은 동기라 먼저 복원 범위를 잡아두고, 측위에 성공하면 그 위로
-  // 덮어쓴다(비동기라 자연히 나중에 온다). 위치권한이 없으면 복원 범위가 남는다.
+  /* 화면 위치 우선순위: 복원된 작업 > 현재 위치 > 기본 중심(회사).
+     작업이 있으면 측위가 화면을 뺏지 않는다 — PC 측위는 IP 기반이라 ±20 km 씩
+     틀리는데, 그걸로 작업 중이던 목장 화면을 밀어내면 손해가 명백하다.
+     측위 자체는 항상 시도한다. 현재위치 마커와 '현재위치 → 마지막 지점' 거리에
+     쓰이기 때문이고, 화면을 옮길지만 centerOnFix 로 가른다. */
   loadLocal();
-  locateMe();
+  const restored = pts.length || areas.length || texts.length;
+  locateMe();                        // centerOnFix=true 로 세팅됨
+  if(restored) centerOnFix=false;    // 복원본이 있으면 그 화면을 지킨다
 }
 
 /* GeoJSON 을 지도에 끌어다 놓아 불러온다. 파일선택 창을 거치지 않는 쪽이
@@ -1289,9 +1294,32 @@ function setGpsStatus(msg, isErr){
   el.textContent=msg;
   el.style.color=isErr?'var(--danger)':'';
 }
+
+/* 오차 반경을 감싸는 사각형. 위도 1도 ≈ 111.32 km 로 잡고 경도는 위도로 보정한다.
+   ponytail: 구면 정확도가 필요한 계산이 아니라 화면 배율을 정하려는 것이라
+   평면 근사로 끝낸다. 극지방에서 cos 이 0 에 수렴하는 것만 막아둔다. */
+function accBox(lat,lng,acc){
+  const dLat=acc/111320;
+  const dLng=acc/(111320*Math.max(0.01, Math.cos(lat*Math.PI/180)));
+  return {sw:{lat:lat-dLat, lng:lng-dLng}, ne:{lat:lat+dLat, lng:lng+dLng}};
+}
+
+/* 측위 결과로 지도를 옮길 때는 배율을 오차에 맞춘다.
+   ±20 km 짜리 IP 측위를 건물 단위(level 3)로 확대해 보여주면 틀린 값이 정확한
+   값처럼 보인다 — 화면이 거짓말을 하게 된다. 오차 반경이 화면에 꽉 차게 잡으면
+   사용자가 "이만큼 불확실하다"를 배율만 보고도 안다.
+   Ponytail §2.3: 센서는 틀어진다. ± 를 숫자로 띄우는 데서 끝내지 않는다. */
+function focusOnGps(acc){
+  if(!gps) return;
+  const b=new kakao.maps.LatLngBounds();
+  const box=accBox(gps.lat, gps.lng, Math.max(acc||0, 10));
+  b.extend(LL(box.sw)); b.extend(LL(box.ne));
+  map.setBounds(b);
+  if(map.getLevel()<3) map.setLevel(3);   // 오차가 아주 작아도 과확대는 하지 않는다
+}
 function locateMe(){
   if(!navigator.geolocation){ setGpsStatus('이 브라우저는 위치 기능을 지원하지 않습니다', true); return; }
-  if(gps){ map.panTo(LL(gps)); if(map.getLevel()>4) map.setLevel(3); } // 즉시 이동 (마지막 확인 위치)
+  if(gps) focusOnGps(gps.acc);   // 즉시 이동 (마지막 확인 위치 + 그때의 오차 배율)
   centerOnFix=true; // 새 측위 완료 시 한 번 더 정확한 위치로 이동
   lowAccTried=false;
   setGpsStatus('측위 중…');
@@ -1314,16 +1342,15 @@ function toggleTrack(){
   }
 }
 function onPos(p){
-  gps={lat:p.coords.latitude, lng:p.coords.longitude};
   // 측위 정확도(accuracy)는 기기·환경에 따라 수십 m 씩 흔들린다. 좌표만 믿고
-  // 보면 오판하므로 반드시 오차 반경을 숫자와 원으로 같이 보여준다.
+  // 보면 오판하므로 오차 반경을 숫자·원·배율 세 곳에 모두 반영한다.
   const acc=p.coords.accuracy;
+  gps={lat:p.coords.latitude, lng:p.coords.longitude, acc:acc};
   document.getElementById('gpsCoord').innerHTML=
     `위도 <b>${fmt(gps.lat)}</b><br>경도 <b>${fmt(gps.lng)}</b>`;
-  // 숫자만 보면 오판한다. PC 는 Wi-Fi/IP 추정이라 수백 m 도 정상 범위이며,
-  // 그 값으로 커버리지를 재면 결론이 통째로 틀린다 — 한계를 같이 적는다.
-  setGpsStatus('정확도 ±'+acc.toFixed(1)+' m'
-    + (acc>100 ? ' · Wi-Fi/IP 추정으로 보입니다. 커버리지 측정은 현장에서 휴대폰 GPS 로 하세요.' : ''));
+  /* 숫자만 보면 오판한다. 데스크톱에는 GPS 칩이 없어 Wi-Fi AP 스캔 → 없으면
+     IP(=ISP 국사 위치)로 떨어지고, 후자는 수십 km 씩 틀린다. 단계별로 다르게 말한다. */
+  setGpsStatus(accMessage(acc), acc>1000);
   if(!gpsMarker){
     const dot='<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20">'
       +'<circle cx="10" cy="10" r="7" fill="#38b6ff" stroke="#fff" stroke-width="2"/></svg>';
@@ -1334,14 +1361,25 @@ function onPos(p){
     gpsCircle=new kakao.maps.Circle({center:LL(gps), radius:acc,
       fillColor:'#38b6ff', fillOpacity:.12, strokeColor:'#38b6ff', strokeOpacity:.4, strokeWeight:1});
     gpsCircle.setMap(map);
-    map.setCenter(LL(gps)); map.setLevel(3);
+    // 첫 측위라고 무조건 화면을 옮기지 않는다. 이동 여부는 아래 centerOnFix 한
+    // 곳에서만 정한다 — 실시간 추적 중에 지도가 제멋대로 튀는 것도 같이 막힌다.
   }else{
     gpsMarker.setPosition(LL(gps));
     gpsCircle.setPosition(LL(gps)); gpsCircle.setRadius(acc);   // 카카오 Circle 은 setCenter 가 아니라 setPosition
   }
-  if(centerOnFix){ map.panTo(LL(gps)); if(map.getLevel()>4) map.setLevel(3); centerOnFix=false; }
+  if(centerOnFix){ focusOnGps(acc); centerOnFix=false; }
   updateDist();
 }
+/* 오차 구간마다 원인과 조치가 다르다. "정확도 ±20000 m" 만 띄우면 그게 정상인지
+   고장인지 알 수 없어, 틀린 위치를 그대로 믿고 커버리지를 잡게 된다. */
+function accMessage(acc){
+  const s='정확도 ±'+(acc>=1000 ? (acc/1000).toFixed(1)+' km' : acc.toFixed(1)+' m');
+  if(acc>1000) return s+' · IP 기반 추정입니다. 위치가 수십 km 틀릴 수 있으니 믿지 마세요. '
+    +'Wi-Fi 어댑터를 켜거나(연결 불필요) 현장에서는 휴대폰으로 여세요.';
+  if(acc>100)  return s+' · Wi-Fi 추정으로 보입니다. 커버리지 측정은 현장에서 휴대폰 GPS 로 하세요.';
+  return s;
+}
+
 /* 코드별 조치가 완전히 다르다. "실패했습니다"만 띄우면 어디를 손봐야 할지
    알 수 없어 권한만 계속 다시 누르게 된다. */
 const GEO_ERR={
@@ -1351,13 +1389,26 @@ const GEO_ERR={
   3:'시간이 초과됐습니다. 실내·유선랜 PC 는 측위가 오래 걸리거나 실패합니다.'
 };
 function onPosErr(e){
+  /* code 1 은 "사용자가 거부"와 "Permissions-Policy 로 문서 전체 차단"을 구분하지
+     않는다. 조치할 곳이 브라우저(권한)와 웹서버(응답 헤더)로 정반대여서, 헤더
+     때문인데 권한 화면만 계속 확인하는 헛수고가 실제로 벌어졌다.
+     크롬은 이 경우 message 에 permissions policy 를 담아 주므로 그걸로 가른다. */
+  if(e.code===1 && /permissions?\s*policy|disabled in this document/i.test(e.message||'')){
+    setGpsStatus('웹서버가 위치 기능을 차단했습니다 (Permissions-Policy). '
+      +'브라우저 권한이 아니라 nginx 설정 문제입니다 — geolocation=(self) 로 허용해야 합니다.', true);
+    toast('서버 설정이 위치를 차단했습니다');
+    console.warn('geolocation blocked by Permissions-Policy', e.message);
+    return;
+  }
   // PC 에는 GPS 칩이 없어 고정밀 요청이 그대로 실패하는 일이 흔하다. Wi-Fi/IP
   // 기반 저정밀로 한 번 더 물어본다 — 권한이 정상인데 안 잡히는 대부분이 여기서 붙는다.
   if(!lowAccTried && (e.code===2 || e.code===3)){
     lowAccTried=true;
     setGpsStatus('정밀 측위 실패 — 저정밀로 재시도 중…');
     navigator.geolocation.getCurrentPosition(onPos, onPosErr,
-      {enableHighAccuracy:false, timeout:20000, maximumAge:300000});
+      // maximumAge 는 0 이어야 한다. 캐시를 허용하면 사용자가 '위치 갱신'을 눌러도
+      // 5분간 같은 값이 돌아와, 틀린 위치가 고정된 것처럼 보인다.
+      {enableHighAccuracy:false, timeout:20000, maximumAge:0});
     return;
   }
   const why=GEO_ERR[e.code] || ('알 수 없는 오류'+(e.message ? (' — '+e.message) : ''));

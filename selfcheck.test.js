@@ -63,6 +63,35 @@ t('면적: 감김 방향 무관(절댓값)', ()=>{
   assert.ok(Math.abs(ctx.polyArea(p)-ctx.polyArea(p.slice().reverse()))<1e-6);
 });
 
+// ---- 2-1. 측위 오차 → 화면 배율 (센서는 틀어진다) ----
+t('accBox: ±100 m 면 상하 약 100 m 씩', ()=>{
+  const b=ctx.accBox(33.4,126.36,100);
+  const up=ctx.haversine({lat:33.4,lng:126.36},{lat:b.ne.lat,lng:126.36});
+  assert.ok(Math.abs(up-100)<2, up.toFixed(1)+' m');
+});
+t('accBox: ±20 km 면 상하 약 20 km 씩(과확대 방지의 근거)', ()=>{
+  const b=ctx.accBox(33.4,126.36,20000);
+  const up=ctx.haversine({lat:33.4,lng:126.36},{lat:b.ne.lat,lng:126.36});
+  assert.ok(Math.abs(up-20000)<300, up.toFixed(1)+' m');
+});
+t('accBox: 경도 폭이 위도로 보정된다(고위도에서 더 넓음)', ()=>{
+  const lo=ctx.accBox(0,126.36,1000), hi=ctx.accBox(60,126.36,1000);
+  assert.ok((hi.ne.lng-hi.sw.lng) > (lo.ne.lng-lo.sw.lng)*1.9);
+});
+t('accBox: 극지방에서도 발산하지 않는다', ()=>{
+  const b=ctx.accBox(89.999,0,1000);
+  assert.ok(isFinite(b.ne.lng) && Math.abs(b.ne.lng)<=180*10, String(b.ne.lng));
+});
+t('accMessage: 1 km 초과는 km 표기 + 신뢰 경고', ()=>{
+  const m=ctx.accMessage(23000);
+  assert.ok(m.indexOf('23.0 km')>=0, m);
+  assert.ok(m.indexOf('믿지 마세요')>=0, m);
+});
+t('accMessage: 100 m 이하는 경고 없이 값만', ()=>{
+  const m=ctx.accMessage(12.3);
+  assert.strictEqual(m,'정확도 ±12.3 m');
+});
+
 // ---- 3. 이스케이프·색 검증 (신뢰 경계) ----
 t('esc: 스크립트 태그 무력화', ()=>
   assert.strictEqual(run('esc("<img src=x onerror=alert(1)>")'),
