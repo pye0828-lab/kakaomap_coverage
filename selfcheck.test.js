@@ -1,5 +1,5 @@
 /* ============================================================================
-   BoviCareKorMap 자체 점검 — 거리·면적·GeoJSON 검증 로직
+   GeoMeasure K 자체 점검 — 거리·면적·GeoJSON 검증 로직
    ----------------------------------------------------------------------------
    실행: node selfcheck.test.js   (의존성 없음, 프레임워크 없음)
    · 거리 기준값은 상위 CLAUDE.md §4 용춘목장 실측. 거리 계산부를 건드리면
@@ -96,6 +96,38 @@ t('정상 파일: 지점1·영역1·텍스트1', ()=>{
   assert.strictEqual(log.length,0, '경고 '+JSON.stringify(log));
 });
 t('반경은 보존(사용자 지정값)', ()=>assert.strictEqual(ctx.parseGeoJSON(good).out.radius,350));
+
+// ---- 지점 이름: 사용자 데이터라 왕복해야 한다 (label·color 는 순서에서 파생) ----
+t('지점 이름 보존', ()=>{
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
+     properties:{kind:'gw',label:'A',name:'본관 GW',color:'#38b6ff'}}]});
+  assert.strictEqual(out.pts[0].name,'본관 GW');
+});
+t('이름 없으면 빈 문자열(글자로 대체는 표시 단계에서)', ()=>{
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},properties:{kind:'gw'}}]});
+  assert.strictEqual(out.pts[0].name,'');
+});
+t('지점 이름 40자 초과는 잘림', ()=>{
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
+     properties:{kind:'gw',name:'가'.repeat(500)}}]});
+  assert.strictEqual(out.pts[0].name.length,40);
+});
+t('지점 이름이 문자열이 아니면 무시', ()=>{
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
+     properties:{kind:'gw',name:{evil:1}}}]});
+  assert.strictEqual(out.pts[0].name,'');
+});
+t('지점 이름의 스크립트는 이스케이프된다', ()=>{
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
+     properties:{kind:'gw',name:'<script>alert(1)</script>'}}]});
+  // 파싱은 원문을 보존하고, DOM 에 넣을 때 esc() 가 막는다
+  assert.ok(run('esc('+JSON.stringify(out.pts[0].name)+')').indexOf('<script')===-1);
+});
 t('목장명 보존', ()=>assert.strictEqual(ctx.parseGeoJSON(good).out.ranch,'용춘목장'));
 t('LineString 은 무시(파생값)', ()=>{
   // 경로가 지점으로 재생성되므로 파싱 결과에 별도 항목이 없어야 한다
