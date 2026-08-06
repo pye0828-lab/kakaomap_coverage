@@ -144,22 +144,10 @@ add_header Permissions-Policy "${geolocation_policy}, microphone=(), camera=()" 
 > `self` = 같은 오리진 문서만 허용. 서드파티 iframe 은 계속 차단되고 브라우저 권한
 > 프롬프트도 그대로 뜬다.
 
-**(5) 카메라 허용** — 지점 사진 첨부가 `<input type="file" capture="environment">` 로
-폰 카메라를 바로 여는데, `camera=()` 면 UA 에 따라 `capture` 가 조용히 무시되고
-평범한 파일선택창으로 떨어진다. geolocation 과 **같은 함정**이라 같은 방식으로 가른다.
-
-```nginx
-map $uri $camera_policy {
-    default                     "camera=()";
-    ~^/bovicare-gmapkakao/      "camera=(self)";
-    ~^/bovicare-gmapkakao-dev/  "camera=(self)";
-}
-
-add_header Permissions-Policy "${geolocation_policy}, microphone=(), ${camera_policy}" always;
-```
-
-> `getUserMedia` 는 쓰지 않으므로 `self` 로 열어도 스트림 접근이 늘지 않는다.
-> **구글맵 판에 사진 기능을 이식하면 `~^/bovicare-gmapgoogle/` 도 이 map 에 추가할 것.**
+> **`camera=()` 는 그대로 둔다.** 지점 사진 첨부는 `<input type="file">` 이 OS 선택창을
+> 띄우는 방식이라 이 정책과 무관하다 — `capture` 속성도, `getUserMedia` 도 쓰지 않는다.
+> (`capture="environment"` 를 쓰면 UA 에 따라 이 헤더에 걸릴 수 있는데, 그 속성은
+> 앨범 선택지를 없애는 부작용이 있어 채택하지 않았다. 사진 버튼은 하나다.)
 
 **진단 요령**: 이 헤더로 막히면 브라우저는 `code 1 (PERMISSION_DENIED)` 을 준다 —
 사용자 거부와 코드가 같아서 권한 화면만 계속 확인하게 된다. 헤더부터 본다.
@@ -223,7 +211,7 @@ done
 
 ```bash
 curl -sI https://yepark.co.kr/bovicare-gmapkakao/ | grep -i permissions-policy
-# 기대: Permissions-Policy: geolocation=(self), microphone=(), camera=(self)
+# 기대: Permissions-Policy: geolocation=(self), microphone=(), camera=()
 curl -sI https://yepark.co.kr/ | grep -i permissions-policy
 # 기대: geolocation=(), microphone=(), camera=()  ← 다른 사이트는 차단 유지
 ```

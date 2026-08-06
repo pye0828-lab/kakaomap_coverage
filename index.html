@@ -281,12 +281,11 @@
           마커에 <b>마우스를 올리면</b> 이름·좌표가 뜨고, <b>클릭하면</b> 해당 지점이 목록에 표시되며 사진 팝업이 열립니다<br>
           📷 = 설치 사진 첨부 (사진이 붙은 지점은 지도 마커에도 카메라 배지가 생깁니다)
         </div>
-        <!-- 지점 사진 입력. capture 가 붙은 쪽은 폰에서 카메라가 곧바로 열리지만,
-             UA 에 따라 '앨범에서 고르기'가 통째로 사라진다 — 현장(촬영)과 사무실
-             (기존 사진 정리)이 둘 다 필요하므로 입력을 두 개로 나눈다. -->
-        <input id="photoCam" type="file" accept="image/*" capture="environment"
-               style="display:none" onchange="onPhotoPick(this)">
-        <input id="photoLib" type="file" accept="image/*" multiple
+        <!-- 지점 사진 입력. capture="environment" 를 일부러 쓰지 않는다 — 그걸 붙이면
+             카메라가 한 번에 열리는 대신 UA 에 따라 '앨범에서 고르기'가 통째로
+             사라진다. 빼 두면 OS 선택창이 촬영·앨범·파일을 다 제시하므로 버튼
+             하나로 둘 다 된다(카메라는 탭 한 번 더). -->
+        <input id="photoInput" type="file" accept="image/*" multiple
                style="display:none" onchange="onPhotoPick(this)">
       </div>
 
@@ -1253,16 +1252,14 @@ async function restorePhotos(){
 let photoTarget=null;                       // 팝업이 열려 있는 지점의 pid
 const photoPt = () => photoTarget ? pts.find(p=>p.pid===photoTarget) : null;
 
-/* capture 를 단 입력은 UA 에 따라 앨범 선택지가 통째로 사라진다 — 그래서 촬영과
-   앨범을 서로 다른 input 두 개로 나눠 두고 여기서 고른다. */
-/* 촬영/선택은 시간이 걸리고 그 사이 팝업이 닫힐 수 있다(폰에서 카메라 앱으로
+/* 사진 고르기는 시간이 걸리고 그 사이 팝업이 닫힐 수 있다(폰에서 카메라 앱으로
    넘어갔다 돌아오는 경로). 고른 사진이 조용히 버려지지 않게 대상 지점을 누를 때
    붙잡아 둔다 — photoTarget 은 팝업의 상태일 뿐이라 여기에 쓰면 안 된다. */
 let photoPickPid=null;
-function pickPhoto(kind){
+function pickPhoto(){
   if(!photoPt()) return;
   photoPickPid=photoTarget;
-  document.getElementById(kind==='cam'?'photoCam':'photoLib').click();
+  document.getElementById('photoInput').click();
 }
 async function onPhotoPick(input){
   const files=Array.prototype.slice.call(input.files||[]);
@@ -1353,8 +1350,7 @@ function paintPhotoBox(){
             + '<button class="ph-del" onclick="delPhoto(\''+ph.id+'\')" title="이 사진 삭제">✕</button></div>').join('')
           + '</div>'
         : '<div class="ph-empty">아직 사진이 없습니다.</div>')
-    + '<div class="ph-btns"><button onclick="pickPhoto(\'cam\')">📷 촬영</button>'
-    + '<button onclick="pickPhoto(\'lib\')">🖼 앨범</button></div>';
+    + '<div class="ph-btns"><button onclick="pickPhoto()">📷 사진 추가</button></div>';
 }
 /* 마커 배지 갱신. 지점 순서·색과 함께 다시 그려야 해서 markerImage() 를 통째로
    갈아끼운다(카카오 Marker 에는 부분 갱신이 없다). */
