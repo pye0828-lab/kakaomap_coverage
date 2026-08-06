@@ -181,13 +181,59 @@ const roundTrip = (photoMap) => {
   return {gj, back:ctx.parseGeoJSON(JSON.parse(JSON.stringify(gj)))};   // 파일을 거친 것과 같게
 };
 
+const badPhotos = arr => ctx.parseGeoJSON({type:'FeatureCollection',features:[
+  {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
+   properties:{kind:'gw',photos:arr}}]});
+// 현장 파일명 예시 — 목장·구역·지점·MAC·날짜가 이름 자체에 들어 있다
+const FNAME='색달목장_방목지_언덕2_D4F98D066F1D_260713.jpg';
 t('사진 왕복: 내보내기→불러오기에서 보존', ()=>{
-  const {back}=roundTrip({abc123:[JPG,PNG]});
+  const {back}=roundTrip({abc123:[{uri:JPG,name:FNAME},{uri:PNG}]});
   const got=back.out.pts[0].photos;         // realm 이 달라 deepStrictEqual 대신 값을 직접 본다
   assert.strictEqual(got.length,2);
-  assert.strictEqual(got[0],JPG);
-  assert.strictEqual(got[1],PNG);
+  assert.strictEqual(got[0].uri,JPG);
+  assert.strictEqual(got[1].uri,PNG);
   assert.strictEqual(back.log.length,0, '경고 '+JSON.stringify(back.log));
+});
+t('원본 파일명 왕복 (리사이즈로 EXIF 가 사라지므로 유일한 촬영 맥락)', ()=>{
+  const {gj,back}=roundTrip({abc123:[{uri:JPG,name:FNAME}]});
+  assert.strictEqual(gj.features[0].properties.photos[0].name, FNAME, '내보내기에 이름이 없다');
+  assert.strictEqual(back.out.pts[0].photos[0].name, FNAME);
+});
+t('파일명 없는 사진은 키 자체가 안 나간다', ()=>{
+  const {gj,back}=roundTrip({abc123:[{uri:JPG}]});
+  assert.strictEqual('name' in gj.features[0].properties.photos[0], false);
+  assert.strictEqual(back.out.pts[0].photos[0].name,'');
+});
+t('파일명 넣기 전 형식(문자열 배열)도 그대로 열린다', ()=>{
+  const {out,log}=badPhotos([JPG,PNG]);     // 예전 내보내기 = data URI 문자열만
+  assert.strictEqual(out.pts[0].photos.length,2);
+  assert.strictEqual(out.pts[0].photos[0].uri,JPG);
+  assert.strictEqual(out.pts[0].photos[0].name,'');
+  assert.strictEqual(log.length,0, '경고 '+JSON.stringify(log));
+});
+t('파일명: 경로·제어문자 제거', ()=>{
+  const {out}=badPhotos([{uri:JPG,name:'../../etc/pa\u0000ss\u001fwd.jpg'}]);
+  assert.strictEqual(out.pts[0].photos[0].name,'passwd.jpg');
+});
+t('파일명: 120자 초과는 잘림', ()=>{
+  const {out}=badPhotos([{uri:JPG,name:'가'.repeat(500)+'.jpg'}]);
+  assert.strictEqual(out.pts[0].photos[0].name.length,120);
+});
+t('파일명이 문자열이 아니면 빈 값', ()=>{
+  const {out}=badPhotos([{uri:JPG,name:{evil:1}},{uri:PNG,name:12345}]);
+  assert.strictEqual(out.pts[0].photos[0].name,'');
+  assert.strictEqual(out.pts[0].photos[1].name,'');
+});
+t('파일명의 스크립트는 이스케이프된다(팝업 title 로 들어간다)', ()=>{
+  const {out}=badPhotos([{uri:JPG,name:'"><img src=x onerror=alert(1)>.jpg'}]);
+  const n=out.pts[0].photos[0].name;
+  const html=run('esc('+JSON.stringify(n)+')');
+  assert.ok(html.indexOf('<img')===-1 && html.indexOf('"')===-1, html);
+});
+t('uri 없는 객체는 파일명이 있어도 버린다', ()=>{
+  const {out,log}=badPhotos([{name:FNAME},{uri:'data:text/html;base64,AA==',name:FNAME}]);
+  assert.strictEqual(out.pts[0].photos.length,0);
+  assert.strictEqual(log.length,2);
 });
 t('지점 id(pid) 왕복: 사진을 잇는 열쇠라 살아야 한다', ()=>
   assert.strictEqual(roundTrip({}).back.out.pts[0].pid,'abc123'));
@@ -210,9 +256,6 @@ t('사진 모르는 구버전이 새 파일을 열어도 좌표는 산다', ()=>
   const c=gj.features[0].geometry.coordinates;
   assert.ok(c[0]===126.3664674 && c[1]===33.4011689, JSON.stringify(c));
 });
-const badPhotos = arr => ctx.parseGeoJSON({type:'FeatureCollection',features:[
-  {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
-   properties:{kind:'gw',photos:arr}}]});
 t('data:text/html 은 거부 + 사유', ()=>{
   const {out,log}=badPhotos(['data:text/html;base64,PHNjcmlwdD4=']);
   assert.strictEqual(out.pts[0].photos.length,0);
