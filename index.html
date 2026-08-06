@@ -391,6 +391,13 @@
         현재 접속 주소(<span id="mapErrOrigin" style="font-family:var(--mono)"></span>)가<br>
         등록되어 있는지 확인하세요.<br>
         <span style="color:var(--dim)">제품 설정 → 카카오맵이 ON인지도 함께 확인.</span>
+        <!-- 이 안내는 '타일이 안 그려졌다'는 증상만 보고 원인을 앱키로 단정한다.
+             실제로는 배율·중심이 깨져도 같은 증상이 나온다. 어느 쪽인지 화면에서
+             바로 갈리도록 판정 근거를 같이 띄운다. -->
+        <div id="mapErrDiag" style="margin-top:14px;font-family:var(--mono);font-size:11px;color:var(--dim)"></div>
+        <!-- 배경이 불투명이라 안내가 뜨면 지도가 통째로 가려진다. 오탐일 때
+             멀쩡한 지도를 못 쓰게 되므로 닫을 길을 남긴다. -->
+        <button class="small" style="margin-top:12px" onclick="hideMapError()">닫고 지도 보기</button>
       </div>
     </div>
   </div>
@@ -1645,8 +1652,25 @@ function loadLocal(){
 // 배포처(NAS·라즈베리파이)마다 origin 이 달라 실제로 가장 흔한 실패라, 원인을
 // 화면에 띄운다. kakao 미정의 상태로 load() 를 부르면 예외가 나면서 이 아래
 // 코드가 통째로 죽으므로 반드시 존재를 먼저 확인한다.
+/* 판정 근거를 사람이 읽을 수 있게 뽑는다. 카카오는 타일을 <img> 로 그리므로
+   naturalWidth>0 인 개수가 "타일이 실제로 왔는가"의 답이다 — tilesloaded 가
+   안 왔다는 것만으로는 타일이 없는 건지 이벤트만 없는 건지 못 가른다. */
+function mapDiag(){
+  const imgs=document.querySelectorAll('#map img');
+  let ok=0; imgs.forEach(i=>{ if(i.naturalWidth>0) ok++; });
+  let lv='-', c='-';
+  try{
+    lv=map.getLevel();
+    const ct=map.getCenter(); c=ct.getLat().toFixed(5)+', '+ct.getLng().toFixed(5);
+  }catch(e){ c='읽기 실패'; }
+  return 'SDK '+(window.kakao&&window.kakao.maps?'OK':'없음')
+       + ' · 타일 '+ok+'/'+imgs.length
+       + ' · 배율 '+lv
+       + ' · 중심 '+c;
+}
 function showMapError(){
   document.getElementById('mapErrOrigin').textContent=location.origin;
+  document.getElementById('mapErrDiag').textContent=mapDiag();
   document.getElementById('mapErr').style.display='flex';
 }
 // 타일이 늦게라도 오면 안내를 걷는다. 타일이 그려졌다는 건 앱키·도메인이
