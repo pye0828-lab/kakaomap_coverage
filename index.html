@@ -249,6 +249,12 @@
           <button class="small" id="trackBtn" onclick="toggleTrack()">실시간 추적 OFF</button>
           <button class="small ghost" onclick="copyText(gps ? fmt(gps.lat)+', '+fmt(gps.lng) : '')">복사</button>
         </div>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;margin-top:8px">
+          <input id="gpsMarkerToggle" type="checkbox" checked onchange="applyGpsMarker()"> 지도에 현재 위치 표시
+        </label>
+        <div class="muted" style="font-size:10px;margin-top:4px">
+          꺼도 좌표·거리 계산은 그대로입니다. 측위 오차가 크면 파란 원이 화면을 덮어 지점이 안 보입니다
+        </div>
       </div>
 
       <div class="card">
@@ -1769,18 +1775,30 @@ function onPos(p){
     gpsMarker=new kakao.maps.Marker({position:LL(gps), title:'현재 위치',
       image:new kakao.maps.MarkerImage('data:image/svg+xml;charset=utf-8,'+encodeURIComponent(dot),
         new kakao.maps.Size(20,20), {offset:new kakao.maps.Point(10,10)})});
-    gpsMarker.setMap(map);
     gpsCircle=new kakao.maps.Circle({center:LL(gps), radius:acc,
       fillColor:'#38b6ff', fillOpacity:.12, strokeColor:'#38b6ff', strokeOpacity:.4, strokeWeight:1});
-    gpsCircle.setMap(map);
     // 첫 측위라고 무조건 화면을 옮기지 않는다. 이동 여부는 아래 centerOnFix 한
     // 곳에서만 정한다 — 실시간 추적 중에 지도가 제멋대로 튀는 것도 같이 막힌다.
   }else{
     gpsMarker.setPosition(LL(gps));
     gpsCircle.setPosition(LL(gps)); gpsCircle.setRadius(acc);   // 카카오 Circle 은 setCenter 가 아니라 setPosition
   }
+  // 지도에 붙일지는 applyGpsMarker() 한 곳에서만 정한다. 여기서 setMap(map) 을
+  // 같이 하면 꺼둔 상태에서 측위가 갱신될 때마다 마커가 되살아난다(추적 ON 이면 매초).
+  applyGpsMarker();
   if(centerOnFix){ focusOnGps(acc); centerOnFix=false; }
   updateDist();
+}
+/* 현재위치 표시 끄기.
+   측위 오차가 크면 파란 오차원이 화면을 덮어 정작 봐야 할 지점·반경원이 안 보인다
+   (PC 는 IP 측위라 ±20 km 가 예사다). 측위 자체는 계속 돌려야 한다 — '현재위치 →
+   마지막 지점' 거리와 좌표 표시가 거기 물려 있어서, 끄는 것은 '표시'뿐이다.
+   반경 표시 토글과 같은 결이라 저장하지 않는다(새로고침하면 다시 켜짐). */
+function applyGpsMarker(){
+  const el=document.getElementById('gpsMarkerToggle');
+  const on=(!el || el.checked) && !!gps;
+  if(gpsMarker) gpsMarker.setMap(on?map:null);
+  if(gpsCircle) gpsCircle.setMap(on?map:null);
 }
 /* 오차 구간마다 원인과 조치가 다르다. "정확도 ±20000 m" 만 띄우면 그게 정상인지
    고장인지 알 수 없어, 틀린 위치를 그대로 믿고 커버리지를 잡게 된다. */
