@@ -144,6 +144,23 @@ add_header Permissions-Policy "${geolocation_policy}, microphone=(), camera=()" 
 > `self` = 같은 오리진 문서만 허용. 서드파티 iframe 은 계속 차단되고 브라우저 권한
 > 프롬프트도 그대로 뜬다.
 
+**(5) 카메라 허용** — 지점 사진 첨부가 `<input type="file" capture="environment">` 로
+폰 카메라를 바로 여는데, `camera=()` 면 UA 에 따라 `capture` 가 조용히 무시되고
+평범한 파일선택창으로 떨어진다. geolocation 과 **같은 함정**이라 같은 방식으로 가른다.
+
+```nginx
+map $uri $camera_policy {
+    default                     "camera=()";
+    ~^/bovicare-gmapkakao/      "camera=(self)";
+    ~^/bovicare-gmapkakao-dev/  "camera=(self)";
+}
+
+add_header Permissions-Policy "${geolocation_policy}, microphone=(), ${camera_policy}" always;
+```
+
+> `getUserMedia` 는 쓰지 않으므로 `self` 로 열어도 스트림 접근이 늘지 않는다.
+> **구글맵 판에 사진 기능을 이식하면 `~^/bovicare-gmapgoogle/` 도 이 map 에 추가할 것.**
+
 **진단 요령**: 이 헤더로 막히면 브라우저는 `code 1 (PERMISSION_DENIED)` 을 준다 —
 사용자 거부와 코드가 같아서 권한 화면만 계속 확인하게 된다. 헤더부터 본다.
 
@@ -206,10 +223,24 @@ done
 
 ```bash
 curl -sI https://yepark.co.kr/bovicare-gmapkakao/ | grep -i permissions-policy
-# 기대: Permissions-Policy: geolocation=(self), microphone=(), camera=()
+# 기대: Permissions-Policy: geolocation=(self), microphone=(), camera=(self)
 curl -sI https://yepark.co.kr/ | grep -i permissions-policy
-# 기대: geolocation=()  ← 다른 사이트는 차단 유지
+# 기대: geolocation=(), microphone=(), camera=()  ← 다른 사이트는 차단 유지
 ```
+
+### 3.3.1 개발용 사본 경로
+
+`/bovicare-gmapkakao/` 는 **돌아가는 서비스**다. 기능을 손볼 때는 라이브를 직접 고치지 말고
+git worktree 로 뜬 사본에서 작업한 뒤 검증이 끝나면 옮긴다. 카카오 도메인 등록은
+`https://yepark.co.kr` **origin 단위**라 경로가 달라도 지도는 그대로 뜬다.
+
+```bash
+git worktree add /var/www/html/webpage-kakaomap-coverage-dev -b <브랜치명>
+```
+
+nginx 쪽은 세 곳이 짝이다 — `location /bovicare-gmapkakao-dev/` (alias),
+내부 폴더명 차단 regex 의 `webpage-kakaomap-coverage-dev`, 그리고 위 두 정책 map.
+사본을 정리할 때는 `git worktree remove` 로 지운다(디렉터리만 지우면 등록이 남는다).
 
 ### 3.4 서버를 새로 세팅하거나 웹서버를 교체하면
 

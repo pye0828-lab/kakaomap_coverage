@@ -10,6 +10,9 @@
   · 지점 좌표 확인 / 경로 거리 측정 / 지점별 반경원 표시 / GPS 실시간 추적
   · 영역(방목지·농장경계) 다각형 + 지도 위 텍스트 주석 — 캡처 후 그림판 작업을
     도구 안으로 옮긴 것. 저장은 GeoJSON(지도 엔진을 바꿔도 데이터가 남도록)
+  · 지점 사진 첨부(설치 사진) — 이 도구는 '설치 전 위치 계산'이고 사진은 '설치 후
+    기록'이라 시점이 갈린다. 그래서 불러오기 → 사진 → 내보내기 왕복이 핵심이고
+    파일 하나로 오간다. 자동저장은 IndexedDB(Blob), 내보내기는 GeoJSON 안 base64
   · 순수 로직 검증: node selfcheck.test.js / 브라우저는 index.html?selfcheck=1
   · 원본: dream2k2/gmap-plus-fsm- (GeoMeasure, Google Maps 기반)
     → 국내 위성영상이 더 최신인 카카오맵 스카이뷰로 지도 엔진을 전면 교체
@@ -162,6 +165,35 @@
 
   #importLog{font-size:10px;line-height:1.5;color:var(--acc2);max-height:120px;overflow-y:auto;margin-top:6px}
 
+  /* ===== 지점 사진 ===== */
+  .pt .cam{background:none;border:none;color:var(--dim);font-size:13px;padding:2px 5px;flex-shrink:0}
+  .pt .cam.has{color:var(--acc2)}
+
+  /* 사진 팝업 — 카카오 CustomOverlay 의 내용물이다.
+     지도 위에 뜨므로 여기서 발생한 클릭이 지도로 새면 지점이 하나 더 찍힌다
+     (JS 쪽에서 stopPropagation 으로 막는다). */
+  #photoBox{width:232px;background:rgba(16,20,24,.96);border:1px solid var(--line);border-radius:10px;
+            padding:8px;box-shadow:0 6px 20px rgba(0,0,0,.6);color:var(--txt)}
+  #photoBox .ph-head{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px}
+  #photoBox .ph-head b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #photoBox .ph-head button{background:none;border:none;color:var(--dim);font-size:14px;padding:0 2px}
+  .ph-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:152px;overflow-y:auto}
+  .ph-item{position:relative;aspect-ratio:1;border-radius:6px;overflow:hidden;background:#000}
+  .ph-item img{width:100%;height:100%;object-fit:cover;display:block;cursor:zoom-in}
+  .ph-del{position:absolute;top:1px;right:1px;background:rgba(0,0,0,.65);border:none;color:#fff;
+          font-size:10px;line-height:1;padding:3px 4px;border-radius:5px}
+  .ph-empty{font-size:11px;color:var(--dim);padding:6px 2px}
+  .ph-btns{display:flex;gap:5px;margin-top:7px}
+  .ph-btns button{flex:1;font-size:11px;padding:6px 4px}
+
+  /* 확대 보기 — 지도 밖 화면 전체를 덮는 평범한 DOM(엔진 무관, 이식 시 그대로) */
+  #lightbox{position:fixed;inset:0;z-index:400;background:rgba(0,0,0,.92);display:none;
+            align-items:center;justify-content:center;padding:12px}
+  #lightbox.on{display:flex}
+  #lightbox img{max-width:100%;max-height:100%;object-fit:contain}
+  #lightbox .close{position:absolute;top:12px;right:14px;background:rgba(255,255,255,.14);border:none;
+                   color:#fff;font-size:16px;padding:7px 13px;border-radius:8px}
+
   /* 자체 점검 결과 오버레이 (?selfcheck=1) */
   #selfcheck{position:fixed;inset:0;z-index:300;background:#0b0f13;color:var(--txt);padding:20px;
              font-family:var(--mono);font-size:13px;line-height:1.7;white-space:pre-wrap;overflow:auto}
@@ -240,8 +272,16 @@
         </div>
         <div class="muted" style="font-size:10px;margin-top:5px">
           탭 = 지점 추가 · 우클릭(길게 누르기) = 지정 종료 · 마커 드래그로 이동<br>
-          마커에 <b>마우스를 올리면</b> 이름·좌표가 뜨고, <b>클릭하면</b> 아래 목록에서 해당 지점이 표시됩니다
+          마커에 <b>마우스를 올리면</b> 이름·좌표가 뜨고, <b>클릭하면</b> 해당 지점이 목록에 표시되며 사진 팝업이 열립니다<br>
+          📷 = 설치 사진 첨부 (사진이 붙은 지점은 지도 마커에도 카메라 배지가 생깁니다)
         </div>
+        <!-- 지점 사진 입력. capture 가 붙은 쪽은 폰에서 카메라가 곧바로 열리지만,
+             UA 에 따라 '앨범에서 고르기'가 통째로 사라진다 — 현장(촬영)과 사무실
+             (기존 사진 정리)이 둘 다 필요하므로 입력을 두 개로 나눈다. -->
+        <input id="photoCam" type="file" accept="image/*" capture="environment"
+               style="display:none" onchange="onPhotoPick(this)">
+        <input id="photoLib" type="file" accept="image/*" multiple
+               style="display:none" onchange="onPhotoPick(this)">
       </div>
 
       <div class="card">
@@ -347,6 +387,13 @@
   </div>
 </div>
 
+<!-- 사진 확대 보기. 썸네일은 3열이라 명판·시리얼이 안 읽힌다 — 원본(리사이즈본)
+     크기로 한 번 더 볼 수 있어야 '설치 기록'으로 쓸모가 있다. -->
+<div id="lightbox" onclick="closeZoom()">
+  <button class="close" onclick="closeZoom()">✕ 닫기</button>
+  <img id="lightboxImg" alt="지점 설치 사진">
+</div>
+
 <div class="toast" id="toast"></div>
 
 <!-- 카카오 앱키는 클라이언트 노출형이 정상 사용법이다(도메인 화이트리스트로 보호).
@@ -370,7 +417,7 @@ let drawingManager=null, pendingText=false;
 
 /* 겹침 순서. 영역은 배경, 커버리지 원과 경로는 그 위, 라벨은 항상 최상단.
    숫자를 이 표 밖에서 직접 쓰지 않는다 — 한 곳만 보면 순서가 파악되도록. */
-const Z={area:1, circle:2, route:3, distLabel:5, areaLabel:6, textLabel:7};
+const Z={area:1, circle:2, route:3, distLabel:5, areaLabel:6, textLabel:7, photoBox:9};
 
 const DEF_FILL='#4cd07d', DEF_STROKE='#4cd07d';
 
@@ -491,16 +538,29 @@ const toPt = ll => ({lat:ll.getLat(), lng:ll.getLng()});
 /* ---------- 마커 이미지 ----------
    카카오 Marker 는 구글과 달리 글자 라벨을 못 붙인다. 라벨용 CustomOverlay 를
    따로 띄우면 드래그할 때 둘을 같이 옮겨야 해서, 색 원+글자를 통째로 그린
-   SVG 데이터 URI 를 마커 이미지로 쓴다(마커 하나로 끝나 드래그 동기화 불필요). */
-function markerImage(color, letter){
-  const svg='<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28">'
-    +'<circle cx="14" cy="14" r="12" fill="'+color+'" stroke="#fff" stroke-width="2"/>'
-    +'<text x="14" y="18.5" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="800" fill="#111">'+letter+'</text>'
-    +'</svg>';
+   SVG 데이터 URI 를 마커 이미지로 쓴다(마커 하나로 끝나 드래그 동기화 불필요).
+
+   ┌─ 이식 경계 (1/2) ─ hasPhoto 배지 ──────────────────────────────────┐
+   │ 사진이 붙은 지점을 지도에서 바로 알아보게 오른쪽 위에 카메라 배지를 │
+   │ 그린다. 없으면 어느 지점에 사진이 있는지 전부 눌러봐야 한다.        │
+   │ SVG 문자열 자체는 엔진과 무관하고, MarkerImage 만 카카오 API 다.    │
+   └────────────────────────────────────────────────────────────────────┘
+   배지가 붙으면 그림이 커지지만 offset(14,cy)이 원의 중심을 가리키므로 마커가
+   찍히는 좌표는 그대로다 — 사진을 붙여도 지점이 움직이지 않는다. */
+function markerImage(color, letter, hasPhoto){
+  const w=hasPhoto?36:28, cy=hasPhoto?22:14;
+  let svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+w+'">'
+    +'<circle cx="14" cy="'+cy+'" r="12" fill="'+color+'" stroke="#fff" stroke-width="2"/>'
+    +'<text x="14" y="'+(cy+4.5)+'" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="800" fill="#111">'+letter+'</text>';
+  if(hasPhoto) svg+='<circle cx="26" cy="10" r="9" fill="#101418" stroke="#fff" stroke-width="1.5"/>'
+    +'<rect x="21.2" y="7.4" width="9.6" height="7" rx="1.6" fill="#fff"/>'
+    +'<rect x="24" y="5.8" width="4" height="2.2" rx=".8" fill="#fff"/>'
+    +'<circle cx="26" cy="10.9" r="2.2" fill="#101418"/>';
+  svg+='</svg>';
   return new kakao.maps.MarkerImage(
     'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg),
-    new kakao.maps.Size(28,28),
-    {offset:new kakao.maps.Point(14,14)});   // 원의 중심이 좌표에 오도록
+    new kakao.maps.Size(w,w),
+    {offset:new kakao.maps.Point(14,cy)});   // 원의 중심이 좌표에 오도록
 }
 const letterOf = i => String.fromCharCode(65+(i%26));   // A, B, C...
 
@@ -982,6 +1042,335 @@ function renderTexts(){
   </div>`).join('');
 }
 
+/* ================= 지점 사진 (지도 엔진 무관) ========================
+   ┌─ 이식 경계 ────────────────────────────────────────────────────────┐
+   │ 이 절에는 카카오 API 가 한 줄도 없다. 리사이즈·EXIF 처리·IndexedDB· │
+   │ data URI 검증/변환이 전부 표준 웹 API 다 — 구글맵 판(GeoMeasure G)  │
+   │ 으로 옮길 때 이 블록은 통째로 복사하면 된다.                        │
+   │ 엔진에 묶인 곳은 두 군데뿐이고 각각 '이식 경계' 주석을 달아 뒀다:    │
+   │   (1) markerImage()  — 마커 카메라 배지 (MarkerImage)               │
+   │   (2) openPhotos()   — 사진 팝업 띄우기 (CustomOverlay)             │
+   └────────────────────────────────────────────────────────────────────┘
+   저장이 두 곳으로 갈리는 이유:
+     자동저장(브라우저 안) → IndexedDB 에 Blob 그대로
+     내보내기(파일)        → GeoJSON properties.photos 에 base64 data URI
+   localStorage 는 origin 당 약 5MB 고정이고 구글맵 판이 같은 호스트라 그 5MB
+   를 나눠 쓴다. 사진을 거기 넣으면 몇 장 만에 QuotaExceededError 로 자동저장이
+   통째로 죽는다 — 사진뿐 아니라 좌표·반경까지 같이 유실된다. 그래서 기존
+   localStorage 자동저장은 손대지 않고, 사진만 IndexedDB 로 빼서 pid 로 잇는다.
+   IndexedDB 는 Blob 을 그대로 받으므로 자동저장 경로에는 base64 변환(+33%)이
+   필요 없다. base64 는 내보내는 파일에서만 쓴다. */
+
+const PHOTO_MAX_EDGE=1280, PHOTO_QUALITY=.75;
+/* 한 지점당 장수 상한. 전경·근접·명판 정도가 실제 쓰임이라 20장이면 넉넉하고,
+   손상된 파일이 사진 수천 장을 들고 와도 여기서 멈춘다(불러오기는 신뢰 경계). */
+const PHOTO_MAX_PER_PT=20;
+const PHOTO_MAX_URI=2*1024*1024;   // 한 장당 길이 상한
+
+/* 지점 id. 사진은 IndexedDB 에 따로 담기므로 지점과 이어붙일 열쇠가 새로고침을
+   넘어 살아남아야 한다 — 자동저장 GeoJSON 의 properties.pid 로 같이 나간다.
+   인덱스(0,1,2…)를 쓰면 앞 지점을 지운 순간 뒤 지점이 남의 사진을 물려받는다.
+   시각+난수라, 자동저장만 지워진 뒤 만든 새 지점이 옛 사진을 주워오지도 않는다. */
+const newPid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+
+/* ---------- 리사이즈 ----------
+   원본을 그대로 넣지 않는 이유: 목적이 '설치 상태 기록'이라 최장변 1280px 이면
+   정보량이 충분하고, 파일 하나로 오가는 구조라 용량이 곧 사용성이다.
+   (약 250KB → base64 약 330KB. 캔버스는 플랫폼 기본 기능이라 라이브러리를 안 쓴다)
+
+   ⚠ imageOrientation:'from-image' 가 이 함수의 핵심이다. canvas 재인코딩은 EXIF
+   회전정보를 버리기 때문에, 이걸 빠뜨리면 세로로 찍은 폰 사진이 90도 누운 채
+   저장된다 — 현장 사진 절반이 여기 해당한다.
+   부수효과로 EXIF 가 통째로 사라진다 = 촬영 GPS·기기정보가 내보낸 파일에 실리지
+   않는다. 이건 의도한 이득이다.
+   ※ 나중에 EXIF GPS 로 지점 자동매칭을 붙이게 되면, 좌표는 반드시 이 함수보다
+     '먼저' 읽어야 한다. 여기를 지나온 Blob 에는 EXIF 가 남아 있지 않다.
+   ponytail: imageOrientation 옵션을 무시하는 구형 브라우저에서는 회전이 그대로
+   남는다. 그때는 EXIF Orientation 태그를 직접 읽어 canvas 에 transform 을 거는
+   길로 바꾼다(그러려면 리사이즈 전에 파일 바이트를 파싱해야 한다). */
+async function shrinkImage(file){
+  let src, w, h;
+  if(typeof createImageBitmap==='function'){
+    src=await createImageBitmap(file,{imageOrientation:'from-image'});
+    w=src.width; h=src.height;
+  }else{
+    src=await loadImgEl(file);                    // createImageBitmap 이 없는 구형 대비
+    w=src.naturalWidth; h=src.naturalHeight;
+  }
+  const s=Math.min(1, PHOTO_MAX_EDGE/Math.max(w,h));   // 작은 사진은 키우지 않는다
+  const cv=document.createElement('canvas');
+  cv.width=Math.max(1,Math.round(w*s)); cv.height=Math.max(1,Math.round(h*s));
+  cv.getContext('2d').drawImage(src,0,0,cv.width,cv.height);
+  if(src.close) src.close();
+  const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',PHOTO_QUALITY));
+  if(!blob) throw new Error('이미지를 인코딩하지 못했습니다');
+  return blob;
+}
+function loadImgEl(file){
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(file), im=new Image();
+    im.onload =()=>{ URL.revokeObjectURL(url); res(im); };
+    im.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('이미지를 읽지 못했습니다')); };
+    im.src=url;
+  });
+}
+
+/* ---------- IndexedDB (사진 Blob) ---------- */
+const PDB_NAME='geomeasure-photos', PDB_STORE='photos';
+let pdbPromise=null;
+function pdb(){
+  if(!pdbPromise) pdbPromise=new Promise((res,rej)=>{
+    if(!window.indexedDB){ rej(new Error('이 브라우저는 IndexedDB 를 지원하지 않습니다')); return; }
+    const rq=indexedDB.open(PDB_NAME,1);
+    rq.onupgradeneeded=()=>{
+      const db=rq.result;
+      // pid 인덱스: 지점을 지울 때 그 지점 사진만 골라 지우는 데 쓴다
+      if(!db.objectStoreNames.contains(PDB_STORE))
+        db.createObjectStore(PDB_STORE,{keyPath:'id'}).createIndex('pid','pid',{unique:false});
+    };
+    rq.onsuccess=()=>res(rq.result);
+    rq.onerror  =()=>rej(rq.error||new Error('IndexedDB 를 열지 못했습니다'));
+  });
+  return pdbPromise;
+}
+function pdbTx(mode, fn){
+  return pdb().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(PDB_STORE,mode), rq=fn(tx.objectStore(PDB_STORE));
+    // 완료는 요청이 아니라 트랜잭션에서 본다 — 요청 성공 뒤 커밋이 실패하면
+    // (용량 초과 등) 저장된 줄 알고 넘어가게 된다.
+    tx.oncomplete=()=>res(rq && 'result' in rq ? rq.result : null);
+    tx.onerror   =()=>rej(tx.error);
+    tx.onabort   =()=>rej(tx.error||new Error('IndexedDB 트랜잭션이 중단됐습니다'));
+  }));
+}
+const photoAll   = ()  => pdbTx('readonly',  st=>st.getAll());
+const photoStore = rec => pdbTx('readwrite', st=>st.put(rec));
+const photoDrop  = id  => pdbTx('readwrite', st=>st.delete(id));
+/* 지점을 지우면 그 사진도 같이 지운다 — 안 지우면 브라우저 안에 계속 쌓인다. */
+function photoDropByPid(pid){
+  if(!pid) return Promise.resolve(null);
+  return pdbTx('readwrite', st=>{
+    const rq=st.index('pid').openCursor(IDBKeyRange.only(pid));
+    rq.onsuccess=()=>{ const c=rq.result; if(c){ c.delete(); c.continue(); } };
+  });
+}
+
+/* ---------- Blob ↔ data URI ----------
+   변환은 내보내기 직전과 불러오기 직후에만 한다. 그 사이 메모리·IndexedDB 에서는
+   계속 Blob 이다(+33% 를 들고 다니지 않기 위해서). */
+function blobToURI(blob){
+  return new Promise((res,rej)=>{
+    const fr=new FileReader();
+    fr.onload =()=>res(String(fr.result));
+    fr.onerror=()=>rej(fr.error||new Error('사진을 인코딩하지 못했습니다'));
+    fr.readAsDataURL(blob);
+  });
+}
+/* 불러오기는 신뢰 경계다. 지금까지 import 로 들어온 것은 숫자와 짧은 문자열뿐이었고,
+   사진이 생기면서 '외부 파일의 문자열이 <img src> 로 DOM 에 꽂히는' 경로가 처음
+   생겼다. 이미지 3종의 base64 만 통과시킨다 — data:text/html 이나 javascript: 가
+   섞여 들어오는 길을 여기서 끊는다(Ponytail §2.3). */
+const PHOTO_URI_RE=/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+const okPhotoURI = u => typeof u==='string' && u.length<=PHOTO_MAX_URI && PHOTO_URI_RE.test(u);
+function uriToBlob(u){
+  if(!okPhotoURI(u)) return null;
+  try{
+    const bin=atob(u.slice(u.indexOf(',')+1));
+    const arr=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+    return new Blob([arr],{type:u.slice(5,u.indexOf(';'))});
+  }catch(e){ return null; }   // base64 길이가 안 맞으면 atob 이 던진다
+}
+/* 파일에서 온 photos 배열 검증. 버린 항목은 기존 방식 그대로 사유를 화면에 남긴다. */
+function photosOf(raw, log, at){
+  if(raw===undefined || raw===null) return [];        // 사진 없는 기존 파일 = 정상
+  if(!Array.isArray(raw)){ log.push(at+'photos 가 배열이 아닙니다 — 무시했습니다'); return []; }
+  const ok=[];
+  raw.forEach(u=>{
+    if(ok.length>=PHOTO_MAX_PER_PT) return;
+    if(okPhotoURI(u)) ok.push(u);
+    else log.push(at+'사진 1장을 버렸습니다 — data:image/(jpeg|png|webp);base64, 형식의 2MB 이하만 받습니다');
+  });
+  if(raw.length>PHOTO_MAX_PER_PT)
+    log.push(at+'사진이 '+raw.length+'장이라 앞 '+PHOTO_MAX_PER_PT+'장만 읽었습니다');
+  return ok;
+}
+
+/* ---------- 메모리 상의 사진 ----------
+   p.photos = [{id, blob, url}]. 표시는 objectURL 로 한다 — 같은 사진을 base64
+   문자열로 메모리에 한 벌 더 들고 있지 않기 위해서다. 지점이 사라질 때 revoke 한다. */
+function attachPhoto(p, id, blob){
+  p.photos.push({id, blob, url:URL.createObjectURL(blob)});
+}
+function freePhotos(p){
+  (p.photos||[]).forEach(ph=>{ if(ph.url) URL.revokeObjectURL(ph.url); });
+}
+async function addPhotoBlob(p, blob){
+  const id=newPid();
+  await photoStore({id, pid:p.pid, blob});   // 저장이 실패하면 화면에도 안 붙인다
+  attachPhoto(p, id, blob);
+}
+
+/* 내보내기용 pid → data URI 표. Blob→base64 변환은 여기서만 일어난다. */
+async function photoURIMap(){
+  const map={};
+  for(const p of pts){
+    if(!p.photos.length) continue;
+    map[p.pid]=[];
+    for(const ph of p.photos) map[p.pid].push(await blobToURI(ph.blob));
+  }
+  return map;
+}
+
+/* 새로고침 복원. 좌표·반경·이름은 기존대로 localStorage 에서 오고, 사진만
+   IndexedDB 에서 pid 로 이어붙인다.
+   주인 없는 사진(자동저장이 지워졌거나 이전 세션이 비정상 종료된 경우)은 여기서
+   정리한다 — 지점 삭제 경로만 믿으면 그런 사진이 영원히 남는다. */
+async function restorePhotos(){
+  let recs;
+  try{ recs=await photoAll(); }
+  catch(e){ console.warn('사진 복원 실패', e); return; }
+  if(!recs || !recs.length) return;
+  // id 앞부분이 생성 시각(base36)이라 사전순 = 대체로 첨부한 순서
+  recs.sort((a,b)=>a.id<b.id?-1:(a.id>b.id?1:0));
+  let orphan=0;
+  recs.forEach(r=>{
+    const p=r.blob && pts.find(x=>x.pid===r.pid);
+    if(p && p.photos.length<PHOTO_MAX_PER_PT) attachPhoto(p, r.id, r.blob);
+    else { orphan++; photoDrop(r.id).catch(()=>{}); }
+  });
+  if(pts.some(p=>p.photos.length)){ renderPts(); syncPhotoBadges(); }
+  if(orphan) console.info('주인 없는 사진 '+orphan+'장을 정리했습니다');
+}
+
+/* ---------- 사진 첨부 / 삭제 ---------- */
+let photoTarget=null;                       // 팝업이 열려 있는 지점의 pid
+const photoPt = () => photoTarget ? pts.find(p=>p.pid===photoTarget) : null;
+
+/* capture 를 단 입력은 UA 에 따라 앨범 선택지가 통째로 사라진다 — 그래서 촬영과
+   앨범을 서로 다른 input 두 개로 나눠 두고 여기서 고른다. */
+/* 촬영/선택은 시간이 걸리고 그 사이 팝업이 닫힐 수 있다(폰에서 카메라 앱으로
+   넘어갔다 돌아오는 경로). 고른 사진이 조용히 버려지지 않게 대상 지점을 누를 때
+   붙잡아 둔다 — photoTarget 은 팝업의 상태일 뿐이라 여기에 쓰면 안 된다. */
+let photoPickPid=null;
+function pickPhoto(kind){
+  if(!photoPt()) return;
+  photoPickPid=photoTarget;
+  document.getElementById(kind==='cam'?'photoCam':'photoLib').click();
+}
+async function onPhotoPick(input){
+  const files=Array.prototype.slice.call(input.files||[]);
+  input.value='';                           // 같은 파일을 다시 골라도 change 가 걸리도록
+  const p=photoPickPid && pts.find(x=>x.pid===photoPickPid);
+  if(!p || !files.length) return;
+  let done=0, err=0;
+  toast('사진 처리 중…');
+  for(const f of files){
+    if(p.photos.length>=PHOTO_MAX_PER_PT){ toast('한 지점에는 '+PHOTO_MAX_PER_PT+'장까지 붙일 수 있습니다'); break; }
+    if(!/^image\//.test(f.type||'')){ err++; continue; }
+    try{ await addPhotoBlob(p, await shrinkImage(f)); done++; }
+    catch(e){ err++; console.warn('사진 저장 실패', e); }
+  }
+  renderPts(); syncPhotoBadges(); paintPhotoBox();
+  // 조용히 실패하면 "붙인 줄 알았는데 없는" 상태가 된다 — 결과를 반드시 말한다
+  toast(done ? ('사진 '+done+'장을 붙였습니다'+(err?(' · '+err+'장 실패'):''))
+             : '사진을 저장하지 못했습니다 (브라우저 저장공간·형식을 확인하세요)');
+}
+async function delPhoto(id){
+  const p=photoPt();
+  if(!p) return;
+  const i=p.photos.findIndex(x=>x.id===id);
+  if(i<0) return;
+  URL.revokeObjectURL(p.photos[i].url);
+  p.photos.splice(i,1);
+  try{ await photoDrop(id); }catch(e){ console.warn('사진 삭제 실패', e); }
+  renderPts(); syncPhotoBadges(); paintPhotoBox();
+}
+/* 불러온 파일의 사진(data URI)을 Blob 으로 되돌려 IndexedDB 에 넣는다. 자동저장
+   경로와 형태를 하나로 맞춰야 새로고침 뒤에도 같은 코드로 복원된다. */
+async function importPhotos(p, uris){
+  // 먼저 같은 pid 의 기존 사진을 지운다. 자기가 내보낸 파일을 다시 불러오면 pid 가
+  // 같아서, 지우기(clearPts)와 넣기가 겹칠 때 방금 넣은 사진이 지워질 수 있다.
+  // 여기서 순서를 확정해 두면 '파일에 있는 것이 곧 그 지점의 사진'이 된다.
+  try{ await photoDropByPid(p.pid); }catch(e){ console.warn('이전 사진 정리 실패', e); }
+  for(const u of uris){
+    const b=uriToBlob(u);
+    if(!b) continue;                        // 검증은 photosOf 에서 이미 끝났다
+    try{ await addPhotoBlob(p, b); }catch(e){ console.warn('사진 저장 실패', e); }
+  }
+  if(pts.indexOf(p)>=0){ renderPts(); syncPhotoBadges(); }
+}
+
+/* ---------- 사진 팝업 ----------
+   ┌─ 이식 경계 (2/2) ──────────────────────────────────────────────────┐
+   │ 지도 위에 띄우는 방법(CustomOverlay)만 카카오에 묶인다. 내용 DOM 을 │
+   │ 만드는 paintPhotoBox() 는 평범한 HTML 이라 그대로 옮긴다.           │
+   │ 구글맵 판에서는 CustomOverlay → OverlayView(또는 InfoWindow) 교체.  │
+   └────────────────────────────────────────────────────────────────────┘ */
+let photoBox=null;
+function openPhotos(pid, pan){
+  const i=pts.findIndex(p=>p.pid===pid);
+  if(i<0) return;
+  photoTarget=pid;
+  if(!photoBox){
+    const el=document.createElement('div');
+    el.id='photoBox';
+    // 팝업 안의 클릭이 지도로 새면 그 자리에 지점이 하나 더 찍힌다(측정 모드).
+    ['click','dblclick','mousedown','touchstart'].forEach(ev=>
+      el.addEventListener(ev, e=>e.stopPropagation()));
+    photoBox=new kakao.maps.CustomOverlay({content:el, xAnchor:.5, yAnchor:1.25, zIndex:Z.photoBox});
+    photoBox.el=el;
+  }
+  photoBox.setPosition(LL(pts[i]));
+  photoBox.setMap(map);
+  // 패널 목록에서 열면 그 지점이 화면 밖일 수 있다 — 팝업만 열면 아무 일도
+  // 안 일어난 것처럼 보이므로 지도를 그리로 옮긴다(마커 클릭 때는 이미 보인다).
+  if(pan) map.panTo(LL(pts[i]));
+  paintPhotoBox();
+}
+function closePhotos(){
+  photoTarget=null;
+  if(photoBox) photoBox.setMap(null);
+}
+function paintPhotoBox(){
+  const p=photoPt();
+  if(!p){ closePhotos(); return; }
+  if(!photoBox) return;
+  // 지점 이름은 사용자·파일에서 온 문자열이라 반드시 이스케이프한다.
+  // 사진 id 는 우리가 만든 [0-9a-z] 뿐이라 속성 안에 그대로 넣어도 안전하다.
+  photoBox.el.innerHTML=
+    '<div class="ph-head"><b>'+esc(nameOf(pts.indexOf(p)))+'</b>'
+    + '<button onclick="closePhotos()" title="닫기">✕</button></div>'
+    + (p.photos.length
+        ? '<div class="ph-grid">'+p.photos.map(ph=>
+            '<div class="ph-item"><img src="'+ph.url+'" alt="설치 사진" onclick="zoomPhoto(\''+ph.id+'\')">'
+            + '<button class="ph-del" onclick="delPhoto(\''+ph.id+'\')" title="이 사진 삭제">✕</button></div>').join('')
+          + '</div>'
+        : '<div class="ph-empty">아직 사진이 없습니다.</div>')
+    + '<div class="ph-btns"><button onclick="pickPhoto(\'cam\')">📷 촬영</button>'
+    + '<button onclick="pickPhoto(\'lib\')">🖼 앨범</button></div>';
+}
+/* 마커 배지 갱신. 지점 순서·색과 함께 다시 그려야 해서 markerImage() 를 통째로
+   갈아끼운다(카카오 Marker 에는 부분 갱신이 없다). */
+function syncPhotoBadges(){
+  markers.forEach((m,i)=>{
+    if(pts[i]) m.setImage(markerImage(colorOf(i), letterOf(i), !!pts[i].photos.length));
+  });
+}
+
+/* ---------- 확대 보기 (엔진 무관) ---------- */
+function zoomPhoto(id){
+  const p=photoPt();
+  const ph=p && p.photos.find(x=>x.id===id);
+  if(!ph) return;
+  document.getElementById('lightboxImg').src=ph.url;
+  document.getElementById('lightbox').classList.add('on');
+}
+function closeZoom(){
+  document.getElementById('lightbox').classList.remove('on');
+  document.getElementById('lightboxImg').removeAttribute('src');
+}
+
 /* ================= GeoJSON 내보내기 / 불러오기 =====================
    저장 포맷을 자체 JSON 이 아니라 GeoJSON 으로 잡는 이유는 지도 엔진을 바꿔도
    현장 데이터가 살아남아야 하기 때문이다(카카오 → 다른 엔진 이식 대비).
@@ -998,14 +1387,21 @@ function ringOf(path){
   if(r.length && (r[0][0]!==r[r.length-1][0] || r[0][1]!==r[r.length-1][1])) r.push(r[0].slice());
   return r;
 }
-function buildGeoJSON(){
+/* photoMap 은 내보내기에서만 넘긴다(pid → [data URI]). 자동저장은 인자 없이
+   불러 사진을 뺀 GeoJSON 을 만든다 — localStorage 는 약 5MB 라 사진을 넣는 순간
+   좌표까지 같이 못 쓰게 된다. 저장 위치를 가르는 지점이 여기 한 곳이다. */
+function buildGeoJSON(photoMap){
   const feats=[], r=radiusVal();
   pts.forEach((p,i)=>feats.push({type:'Feature',
     geometry:{type:'Point', coordinates:[p.lng,p.lat]},
     // label·color 는 순서에서 파생되는 표시값이고, name 이 사용자가 넣은 값이다.
     // name 이 비면 키 자체를 뺀다(JSON.stringify 가 undefined 를 생략한다).
+    // photos 는 단수 string 이 아니라 배열이다 — 설치 사진은 전경/근접/명판 식으로
+    // 여러 장이 되고, 나중에 포맷을 바꾸면 이미 나간 파일과 호환이 깨진다.
     properties:{kind:'gw', radius:r, label:letterOf(i),
-                name:p.name || undefined, color:colorOf(i)}}));
+                name:p.name || undefined, pid:p.pid,
+                photos:(photoMap && photoMap[p.pid]) || undefined,
+                color:colorOf(i)}}));
   areas.forEach(a=>feats.push({type:'Feature',
     geometry:{type:'Polygon', coordinates:[ringOf(a.path)]},
     properties:{kind:'area', name:a.name, desc:a.desc,
@@ -1027,8 +1423,14 @@ function buildGeoJSON(){
                 created:new Date().toISOString().slice(0,10)},
     features:feats};
 }
-function exportGeoJSON(){
-  const gj=buildGeoJSON();
+/* 사진을 파일에 싣느라 비동기가 됐다(Blob→base64). 사진이 없으면 표가 비어
+   있을 뿐 흐름은 같다. 변환이 실패해도 좌표는 반드시 내보낸다 — 사진 때문에
+   측정 결과까지 못 받는 쪽이 더 나쁘다. */
+async function exportGeoJSON(){
+  let photoMap={};
+  try{ photoMap=await photoURIMap(); }
+  catch(e){ console.warn('사진 인코딩 실패', e); toast('사진을 파일에 담지 못했습니다 — 좌표만 내보냅니다'); }
+  const gj=buildGeoJSON(photoMap);
   if(!gj.features.length){ toast('저장할 내용이 없습니다'); return; }
   const base=(gj.name||'bovicare').replace(/[^\w가-힣.-]+/g,'_').slice(0,40) || 'bovicare';
   const fname=base+'_'+new Date().toISOString().slice(0,10)+'.geojson';
@@ -1075,7 +1477,10 @@ function parseGeoJSON(obj){
         // kind 가 비어도 Point 는 GW 지점으로 받는다(외부에서 만든 파일 수용)
         // 예전에는 좌표만 받고 properties 를 통째로 버렸다. 이름이 사용자 데이터가
         // 된 지금은 그게 곧 유실이다. label·color 는 순서에서 다시 만든다.
-        out.pts.push({lat:c.lat, lng:c.lng, name:str(pr.name,40)});
+        out.pts.push({lat:c.lat, lng:c.lng, name:str(pr.name,40),
+                      // pid 가 없는 파일(구버전·외부 제작)은 불러올 때 새로 만든다
+                      pid:str(pr.pid,40)||null,
+                      photos:photosOf(pr.photos, log, at)});
         const r=clampNum(pr.radius,1,100000,null);
         if(r!==null){
           if(out.radius===null) out.radius=r;
@@ -1110,7 +1515,7 @@ function applyParsed(out){
   clearAreas(true); clearTexts(true); clearPts();
   if(out.ranch) document.getElementById('ranchInput').value=out.ranch;
   if(out.radius!==null) document.getElementById('radiusInput').value=out.radius;
-  out.pts.forEach(p=>addPt(p.lat,p.lng,p.name));
+  out.pts.forEach(p=>addPt(p.lat,p.lng,p.name,p.pid,p.photos));
   out.areas.forEach(a=>addArea(a));
   out.texts.forEach(t=>addText(t.pos,t));
   applyRadius();
@@ -1147,7 +1552,10 @@ function importGeoJSONText(txt){
 }
 function readFile(file){
   if(!file) return;
-  if(file.size>8*1024*1024){ toast('파일이 너무 큽니다 (8MB 초과)'); return; }
+  // 사진이 base64 로 들어가면서 파일이 커졌다(한 장 약 330KB). 8MB 로 두면 자기가
+  // 내보낸 파일을 자기가 못 여는 일이 생긴다. 상한 자체는 남긴다 — 통째로 읽어
+  // JSON.parse 하므로 무제한이면 현장 폰이 멈춘다.
+  if(file.size>32*1024*1024){ toast('파일이 너무 큽니다 (32MB 초과)'); return; }
   const fr=new FileReader();
   fr.onload=()=>importGeoJSONText(String(fr.result));
   fr.onerror=()=>toast('파일을 읽지 못했습니다');
@@ -1221,6 +1629,7 @@ function initMap(){
     // 마커 클릭이 지도 클릭으로 번지는지가 카카오 문서에 없다. 번지더라도 측정
     // 모드에서 지점이 하나 더 찍히지 않도록, 직후의 지도 클릭 한 번은 흘린다.
     if(Date.now()-markerClickAt < 300) return;
+    closePhotos();       // 다른 곳을 누르면 사진 팝업은 닫는다(마커 클릭은 위에서 걸러짐)
     const p=toPt(e.latLng);
     if(pendingText){
       pendingText=false;
@@ -1265,6 +1674,9 @@ function initMap(){
      측위 자체는 항상 시도한다. 현재위치 마커와 '현재위치 → 마지막 지점' 거리에
      쓰이기 때문이고, 화면을 옮길지만 centerOnFix 로 가른다. */
   loadLocal();
+  // 좌표는 localStorage(동기), 사진은 IndexedDB(비동기)에서 온다. 지점이 다
+  // 만들어진 뒤에 pid 로 이어붙여야 하므로 loadLocal() 다음에 둔다.
+  restorePhotos();
   const restored = pts.length || areas.length || texts.length;
   locateMe();                        // centerOnFix=true 로 세팅됨
   if(restored) centerOnFix=false;    // 복원본이 있으면 그 화면을 지킨다
@@ -1429,44 +1841,63 @@ function syncMarkerTitles(){
   markers.forEach((m,i)=>{ if(m.setTitle) m.setTitle(titleOf(i)); });
 }
 
-function addPt(lat,lng,name){
+function addPt(lat,lng,name,pid,photoURIs){
   const idx=pts.length;
-  pts.push({lat,lng,name:name||''});
+  // pid 는 사진을 잇는 열쇠다. 불러온 파일·자동저장에 있으면 그 값을 지키고,
+  // 없을 때만 새로 만든다(같은 파일을 다시 열어도 사진이 따라오게).
+  const p={lat, lng, name:name||'', pid:pid||newPid(), photos:[]};
+  pts.push(p);
   const m=new kakao.maps.Marker({position:LL({lat,lng}),
-    image:markerImage(colorOf(idx), letterOf(idx)), draggable:true,
+    image:markerImage(colorOf(idx), letterOf(idx), false), draggable:true,
     title:titleOf(idx)});   // 네이티브 툴팁 — 별도 팝업이 없어 드래그와 충돌하지 않는다
   m.setMap(map);
   // 우클릭은 이미 '지정 종료'와 '다각형 닫기'에 쓰인다 — 일반 클릭을 쓴다(터치에서도 동작)
   kakao.maps.event.addListener(m,'click', ()=>{
     markerClickAt=Date.now();
     highlightPt(markers.indexOf(m));
+    openPhotos(p.pid);          // 지도에서 지점을 누르면 그 자리에서 사진을 붙이고 본다
   });
   kakao.maps.event.addListener(m,'dragend', ()=>{
     const i=markers.indexOf(m);
     if(i<0) return;                       // 드래그 도중 삭제된 마커 방어
-    pts[i]=toPt(m.getPosition());
+    // 통째로 대입하면 name·pid·photos 가 날아간다(이름 유실은 이미 있던 버그였고,
+    // 사진까지 붙은 지금은 pid 가 끊겨 사진이 미아가 된다) — 좌표만 갈아끼운다.
+    Object.assign(pts[i], toPt(m.getPosition()));
     circles[i].setPosition(m.getPosition());
+    if(photoBox && photoTarget===pts[i].pid) photoBox.setPosition(m.getPosition());   // 팝업도 따라간다
     renderPts(); drawLine(); updateDist();
   });
   markers.push(m);
   circles.push(makeCircle(lat,lng,idx));
+  // 불러오기로 들어온 사진은 Blob 으로 되돌려 IndexedDB 에 넣는다(비동기라 뒤늦게 붙는다)
+  if(photoURIs && photoURIs.length) importPhotos(p, photoURIs);
   renderPts(); drawLine(); updateDist();
 }
 function delPt(i){
+  const gone=pts[i];
+  if(photoTarget===gone.pid) closePhotos();
   markers[i].setMap(null);
   circles[i].setMap(null);
   pts.splice(i,1); markers.splice(i,1); circles.splice(i,1);
+  // 지점이 사라지면 그 사진도 브라우저에서 지운다 — 안 지우면 계속 쌓인다
+  freePhotos(gone);
+  photoDropByPid(gone.pid).catch(e=>console.warn('사진 삭제 실패', e));
   // 라벨·색상 재정렬 (A,B,C... 순서에 맞게)
   markers.forEach((m,j)=>{
-    m.setImage(markerImage(colorOf(j), letterOf(j)));
+    m.setImage(markerImage(colorOf(j), letterOf(j), !!pts[j].photos.length));
     circles[j].setOptions({fillColor:colorOf(j), strokeColor:colorOf(j)});
   });
   hideRubber();
   renderPts(); drawLine(); updateDist();
 }
 function clearPts(){
+  closePhotos();
   markers.forEach(m=>m.setMap(null));
   circles.forEach(c=>c.setMap(null));
+  // 지금 화면에 있는 지점의 사진만 지운다. 새로고침 복원 때 여기를 지나가지만
+  // 그때는 pts 가 비어 있어(아직 안 만들어졌다) 아무것도 지우지 않는다 —
+  // 복원은 localStorage 로 지점을 만든 뒤 restorePhotos() 가 pid 로 다시 잇는다.
+  pts.forEach(p=>{ freePhotos(p); photoDropByPid(p.pid).catch(()=>{}); });
   pts=[]; markers=[]; circles=[];
   hideRubber();
   setMode('measure');            // 전체 삭제 시 지정 모드 재개
@@ -1483,6 +1914,7 @@ function renderPts(){
   el.innerHTML=pts.map((p,i)=>{
     let seg='';
     if(i>0) seg='이전 지점에서 '+fmtDist(haversine(pts[i-1],p));
+    const n=p.photos.length;
     return `<div class="pt" id="pt-${i}">
       <div class="badge" style="background:${colorOf(i)}">${letterOf(i)}</div>
       <div class="info">
@@ -1491,6 +1923,8 @@ function renderPts(){
         <div class="ll" onclick="copyText('${fmt(p.lat)}, ${fmt(p.lng)}')">${fmt(p.lat)}, ${fmt(p.lng)}</div>
         <div class="seg">${seg||'시작 지점 · 드래그로 이동 가능'}</div>
       </div>
+      <button class="cam${n?' has':''}" onclick="openPhotos('${p.pid}',true)"
+              title="설치 사진 ${n?(n+'장 — 보기/추가'):'첨부'}">📷${n||''}</button>
       <button class="del" onclick="delPt(${i})">✕</button>
     </div>`;
   }).join('');

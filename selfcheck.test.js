@@ -168,6 +168,84 @@ t('Polygon 닫힘점 제거', ()=>{
   assert.strictEqual(out.areas[0].path.length,4);   // 링 5점 → 표시용 4점
 });
 
+// ---- 4-1. 지점 사진 ----
+// 사진은 파일 하나로 오가는 게 절대 조건이라 왕복(export→import)이 깨지면 안 되고,
+// 외부 파일의 문자열이 <img src> 로 DOM 에 꽂히는 경로라 검증도 함께 본다.
+const JPG='data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAg=';
+const PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+// 최상위 let 인 pts 는 샌드박스 프로퍼티가 아니라 컨텍스트 안에서 채워 넣는다
+run('function __setPts(a){ pts.length=0; a.forEach(x=>pts.push(x)); }');
+const roundTrip = (photoMap) => {
+  ctx.__setPts([{lat:33.4011689,lng:126.3664674,name:'A동 GW',pid:'abc123',photos:[]}]);
+  const gj=ctx.buildGeoJSON(photoMap);
+  return {gj, back:ctx.parseGeoJSON(JSON.parse(JSON.stringify(gj)))};   // 파일을 거친 것과 같게
+};
+
+t('사진 왕복: 내보내기→불러오기에서 보존', ()=>{
+  const {back}=roundTrip({abc123:[JPG,PNG]});
+  const got=back.out.pts[0].photos;         // realm 이 달라 deepStrictEqual 대신 값을 직접 본다
+  assert.strictEqual(got.length,2);
+  assert.strictEqual(got[0],JPG);
+  assert.strictEqual(got[1],PNG);
+  assert.strictEqual(back.log.length,0, '경고 '+JSON.stringify(back.log));
+});
+t('지점 id(pid) 왕복: 사진을 잇는 열쇠라 살아야 한다', ()=>
+  assert.strictEqual(roundTrip({}).back.out.pts[0].pid,'abc123'));
+// 자동저장(localStorage)은 origin 당 약 5MB 고정이고 구글맵 판과 나눠 쓴다.
+// 여기 사진이 섞이면 QuotaExceededError 로 좌표까지 통째로 유실된다.
+t('자동저장 GeoJSON 에는 사진이 안 들어간다', ()=>{
+  const {gj}=roundTrip(undefined);          // saveLocal() 이 부르는 방식
+  assert.strictEqual(gj.features[0].properties.photos, undefined);
+  assert.ok(JSON.stringify(gj).indexOf('base64')<0);
+});
+t('사진 없는 기존 파일도 그대로 열린다(역호환)', ()=>{
+  const {out,log}=ctx.parseGeoJSON(good);   // photos 키 자체가 없는 파일
+  assert.strictEqual(out.pts.length,1);
+  assert.strictEqual(out.pts[0].photos.length,0);
+  assert.strictEqual(log.length,0, '경고 '+JSON.stringify(log));
+});
+t('사진 모르는 구버전이 새 파일을 열어도 좌표는 산다', ()=>{
+  // photos·pid 를 모르는 파서는 properties 를 무시할 뿐이다 — geometry 는 그대로여야 한다
+  const {gj}=roundTrip({abc123:[JPG]});
+  const c=gj.features[0].geometry.coordinates;
+  assert.ok(c[0]===126.3664674 && c[1]===33.4011689, JSON.stringify(c));
+});
+const badPhotos = arr => ctx.parseGeoJSON({type:'FeatureCollection',features:[
+  {type:'Feature',geometry:{type:'Point',coordinates:[126.36,33.4]},
+   properties:{kind:'gw',photos:arr}}]});
+t('data:text/html 은 거부 + 사유', ()=>{
+  const {out,log}=badPhotos(['data:text/html;base64,PHNjcmlwdD4=']);
+  assert.strictEqual(out.pts[0].photos.length,0);
+  assert.ok(log.length>0, '버렸으면 사유를 남겨야 한다');
+});
+t('접두어 없는 문자열·javascript: 거부', ()=>{
+  const {out}=badPhotos(['iVBORw0KGgo=', 'javascript:alert(1)', '<img src=x onerror=alert(1)>']);
+  assert.strictEqual(out.pts[0].photos.length,0);
+});
+t('data URI 가 아닌 타입(객체·숫자) 거부', ()=>
+  assert.strictEqual(badPhotos([{},7,null]).out.pts[0].photos.length,0));
+t('photos 가 배열이 아니면 무시 + 사유', ()=>{
+  const {out,log}=badPhotos(JPG);           // 단수 string 으로 온 경우
+  assert.strictEqual(out.pts[0].photos.length,0);
+  assert.ok(log.some(m=>m.includes('배열')));
+});
+t('한 장 2MB 초과 거부(DoS·용량 방어)', ()=>{
+  const big='data:image/jpeg;base64,'+'A'.repeat(3*1024*1024);
+  assert.strictEqual(badPhotos([big]).out.pts[0].photos.length,0);
+});
+t('장수 상한 20장', ()=>{
+  const {out,log}=badPhotos(new Array(30).fill(JPG));
+  assert.strictEqual(out.pts[0].photos.length,20);
+  assert.ok(log.some(m=>m.includes('20장만')));
+});
+t('base64 문자셋 밖의 글자 거부', ()=>
+  assert.strictEqual(badPhotos(['data:image/jpeg;base64,AAAA<>AAAA']).out.pts[0].photos.length,0));
+t('okPhotoURI: 정상 3종 통과', ()=>{
+  assert.ok(run('okPhotoURI('+JSON.stringify(JPG)+')'));
+  assert.ok(run('okPhotoURI('+JSON.stringify(PNG)+')'));
+  assert.ok(run('okPhotoURI("data:image/webp;base64,UklGRg==")'));
+});
+
 // ---- 5. GeoJSON 파싱: 손상·악의적 입력 (조용히 깨지면 안 된다) ----
 t('최상위가 배열이면 중단 + 사유', ()=>{
   const {log,out}=ctx.parseGeoJSON([1,2,3]);
