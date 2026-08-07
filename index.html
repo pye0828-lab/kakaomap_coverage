@@ -166,8 +166,9 @@
   #importLog{font-size:10px;line-height:1.5;color:var(--acc2);max-height:120px;overflow-y:auto;margin-top:6px}
 
   /* ===== 지점 사진 ===== */
-  .pt .cam{background:none;border:none;color:var(--dim);font-size:13px;padding:2px 5px;flex-shrink:0}
-  .pt .cam.has{color:var(--acc2)}
+  /* 지점(.pt)과 텍스트(.item-head) 양쪽에서 쓰므로 스코프를 두지 않는다 */
+  .cam{background:none;border:none;color:var(--dim);font-size:13px;padding:2px 5px;flex-shrink:0}
+  .cam.has{color:var(--acc2)}
 
   /* 사진 팝업 — 카카오 CustomOverlay 의 내용물이다.
      지도 위에 뜨므로 여기서 발생한 클릭이 지도로 새면 지점이 하나 더 찍힌다
@@ -428,7 +429,7 @@ let watchId=null, places=null, geocoder=null;
    병렬 배열은 삭제할 때마다 인덱스를 세 군데 맞춰야 해서(delPt 참조) 항목이
    늘수록 깨지기 쉽다. 처음부터 id 를 가진 객체 배열로 잡는다. */
 let areas=[];   // {id, path:[{lat,lng}], name, desc, style:{fillColor,strokeColor,opacity}, labelPos, polygon, label}
-let texts=[];   // {id, pos:{lat,lng}, text, fontSize, overlay}
+let texts=[];   // {id, pid, pos:{lat,lng}, text, fontSize, photos, overlay}
 let areaSeq=0, textSeq=0;
 let drawingManager=null, pendingText=false;
 
@@ -1011,18 +1012,38 @@ function startPlaceText(){
 }
 function addText(pos,o){
   o=o||{};
-  const t={id:++textSeq, pos, text:o.text||'설명', fontSize:o.fontSize||14};
+  // pid 는 사진을 잇는 열쇠다. id(++textSeq)는 새로고침마다 다시 매겨져서 못 쓴다 —
+  // 지점과 같은 이유로 파일·자동저장에 있으면 그 값을 지킨다.
+  const t={id:++textSeq, pos, text:o.text||'설명', fontSize:o.fontSize||14,
+           pid:o.pid||newPid(), photos:[]};
   const el=document.createElement('div');
   el.className='map-label text-label';
-  t.overlay=makeDraggableLabel(pos, el, Z.textLabel, p=>{ t.pos=p; saveLocal(); });
+  t.overlay=makeDraggableLabel(pos, el, Z.textLabel, p=>{
+    t.pos=p;
+    // 사진 팝업이 이 텍스트의 것이면 같이 따라간다(지점 마커 dragend 와 같은 처리)
+    if(photoBox && photoTarget===t.pid) photoBox.setPosition(LL(p));
+    saveLocal();
+  });
   paintText(t);
   texts.push(t);
+  // 불러오기로 들어온 사진은 Blob 으로 되돌려 IndexedDB 에 넣는다(비동기라 뒤늦게 붙는다)
+  if(o.photos && o.photos.length) importPhotos(t, o.photos);
   renderTexts(); applyLabelVisibility(); saveLocal();
   return t;
 }
 function paintText(t){
   t.overlay.el.style.fontSize=t.fontSize+'px';
   t.overlay.el.textContent=t.text;   // textContent 라 이스케이프 불필요
+  /* 사진이 붙어 있다는 걸 지도에서 바로 알 수 있어야 한다. 패널을 열어야만
+     보이면 현장에서 사진의 존재 자체를 놓친다 — 지점은 마커 배지가 그 역할을
+     하고 있어, 텍스트는 라벨 안에 같은 표시를 둔다. */
+  const n=(t.photos||[]).length;
+  if(n){
+    const b=document.createElement('span');
+    b.className='dim';                 // .map-label span.dim — 기존 보조표기 스타일 재사용
+    b.textContent='📷 '+n;
+    t.overlay.el.appendChild(b);       // textContent 로 비운 뒤라 순서가 맞다
+  }
 }
 function editText(id,k,v){
   const t=texts.find(x=>x.id===id);
@@ -1034,13 +1055,25 @@ function editText(id,k,v){
 function delText(id){
   const i=texts.findIndex(x=>x.id===id);
   if(i<0) return;
-  texts[i].overlay.setMap(null);
+  const gone=texts[i];
+  if(photoTarget===gone.pid) closePhotos();
+  gone.overlay.setMap(null);
   texts.splice(i,1);
+  // 텍스트가 사라지면 그 사진도 브라우저에서 지운다 — 안 지우면 계속 쌓인다
+  freePhotos(gone);
+  photoDropByPid(gone.pid).catch(e=>console.warn('사진 삭제 실패', e));
   renderTexts(); saveLocal();
 }
 function clearTexts(silent){
   const n=texts.length;
-  texts.forEach(t=>t.overlay.setMap(null));
+  if(texts.some(t=>t.pid===photoTarget)) closePhotos();   // 사라질 텍스트의 팝업이 떠 있으면 닫는다
+  // clearPts 와 같은 이유로 지금 화면에 있는 것만 지운다. 새로고침 복원 때도
+  // 여기를 지나가지만 그때는 texts 가 비어 있어 아무것도 안 지운다.
+  texts.forEach(t=>{
+    t.overlay.setMap(null);
+    freePhotos(t);
+    photoDropByPid(t.pid).catch(()=>{});
+  });
   texts=[];
   renderTexts(); saveLocal();
   if(!silent) toast(n ? ('텍스트 '+n+'개를 삭제했습니다') : '삭제할 텍스트가 없습니다');
@@ -1048,15 +1081,19 @@ function clearTexts(silent){
 function renderTexts(){
   const el=document.getElementById('textList');
   if(!texts.length){ el.innerHTML='<div class="muted">영역과 무관한 설명을 지도에 놓을 수 있습니다.</div>'; return; }
-  el.innerHTML=texts.map(t=>`<div class="item">
+  el.innerHTML=texts.map(t=>{
+    const n=t.photos.length;
+    return `<div class="item">
     <div class="item-head">
       <input type="text" value="${esc(t.text)}" maxlength="200" oninput="editText(${t.id},'text',this.value)">
+      <button class="cam${n?' has':''}" onclick="openPhotos('${t.pid}',true)"
+              title="설명 사진 ${n?(n+'장 — 보기/추가'):'첨부'}">📷${n||''}</button>
       <button class="del" onclick="delText(${t.id})">✕</button>
     </div>
     <div class="item-row">
       <label>크기<input type="range" min="8" max="48" step="1" value="${t.fontSize}" oninput="editText(${t.id},'fontSize',this.value)"></label>
     </div>
-  </div>`).join('');
+  </div>`;}).join('');
 }
 
 /* ================= 지점 사진 (지도 엔진 무관) ========================
@@ -1079,7 +1116,7 @@ function renderTexts(){
    필요 없다. base64 는 내보내는 파일에서만 쓴다. */
 
 const PHOTO_MAX_EDGE=1280, PHOTO_QUALITY=.75;
-/* 한 지점당 장수 상한. 전경·근접·명판 정도가 실제 쓰임이라 20장이면 넉넉하고,
+/* 지점·텍스트 하나당 장수 상한. 전경·근접·명판 정도가 실제 쓰임이라 20장이면 넉넉하고,
    손상된 파일이 사진 수천 장을 들고 와도 여기서 멈춘다(불러오기는 신뢰 경계). */
 const PHOTO_MAX_PER_PT=20;
 const PHOTO_MAX_URI=2*1024*1024;   // 한 장당 길이 상한
@@ -1246,10 +1283,10 @@ async function addPhotoBlob(p, blob, name){
    이름이 없으면 키 자체를 뺀다(JSON.stringify 가 undefined 를 생략한다). */
 async function photoURIMap(){
   const map={};
-  for(const p of pts){
-    if(!p.photos.length) continue;
-    map[p.pid]=[];
-    for(const ph of p.photos) map[p.pid].push({uri:await blobToURI(ph.blob), name:ph.name||undefined});
+  for(const o of photoOwners()){
+    if(!o.photos.length) continue;
+    map[o.pid]=[];
+    for(const ph of o.photos) map[o.pid].push({uri:await blobToURI(ph.blob), name:ph.name||undefined});
   }
   return map;
 }
@@ -1267,17 +1304,29 @@ async function restorePhotos(){
   recs.sort((a,b)=>a.id<b.id?-1:(a.id>b.id?1:0));
   let orphan=0;
   recs.forEach(r=>{
-    const p=r.blob && pts.find(x=>x.pid===r.pid);
-    if(p && p.photos.length<PHOTO_MAX_PER_PT) attachPhoto(p, r.id, r.blob, r.name);
+    const o=r.blob && ownerOf(r.pid);
+    if(o && o.photos.length<PHOTO_MAX_PER_PT) attachPhoto(o, r.id, r.blob, r.name);
     else { orphan++; photoDrop(r.id).catch(()=>{}); }
   });
-  if(pts.some(p=>p.photos.length)){ renderPts(); syncPhotoBadges(); }
+  if(photoOwners().some(o=>o.photos.length)){ renderPts(); renderTexts(); syncPhotoBadges(); }
   if(orphan) console.info('주인 없는 사진 '+orphan+'장을 정리했습니다');
 }
 
 /* ---------- 사진 첨부 / 삭제 ---------- */
-let photoTarget=null;                       // 팝업이 열려 있는 지점의 pid
-const photoPt = () => photoTarget ? pts.find(p=>p.pid===photoTarget) : null;
+let photoTarget=null;                       // 팝업이 열려 있는 소유자의 pid
+
+/* 사진의 주인은 지점이거나 텍스트다. 둘 다 pid·photos 만 들고 있으면 되고,
+   아래 사진 코드는 어느 쪽인지 알 필요가 없다 — pts 를 직접 뒤지던 자리를 전부
+   여기로 모아, 소유자가 늘어도 사진 코드는 그대로 두게 한다.
+   ponytail: 목록이 둘뿐이라 concat 후 선형탐색으로 끝낸다. 지점·텍스트가 수천 개가
+   되면 pid→소유자 Map 을 캐시해야 하는데, 현장 작업 규모(수십 개)에서는 불필요하다. */
+const photoOwners = () => pts.concat(texts);
+const ownerOf     = pid => pid ? photoOwners().find(o=>o.pid===pid) : null;
+const isTextOwner = o => texts.indexOf(o)>=0;
+// 텍스트는 좌표가 pos 안에 있고, 지점은 자기 자신이 좌표다
+const ownerPos    = o => isTextOwner(o) ? o.pos : o;
+const ownerTitle  = o => isTextOwner(o) ? (o.text||'설명') : nameOf(pts.indexOf(o));
+const photoPt     = () => ownerOf(photoTarget);
 
 /* 사진 고르기는 시간이 걸리고 그 사이 팝업이 닫힐 수 있다(폰에서 카메라 앱으로
    넘어갔다 돌아오는 경로). 고른 사진이 조용히 버려지지 않게 대상 지점을 누를 때
@@ -1291,7 +1340,7 @@ function pickPhoto(){
 async function onPhotoPick(input){
   const files=Array.prototype.slice.call(input.files||[]);
   input.value='';                           // 같은 파일을 다시 골라도 change 가 걸리도록
-  const p=photoPickPid && pts.find(x=>x.pid===photoPickPid);
+  const p=ownerOf(photoPickPid);
   if(!p || !files.length) return;
   let done=0, err=0;
   toast('사진 처리 중…');
@@ -1302,7 +1351,7 @@ async function onPhotoPick(input){
     try{ await addPhotoBlob(p, await shrinkImage(f), photoName(f.name)); done++; }
     catch(e){ err++; console.warn('사진 저장 실패', e); }
   }
-  renderPts(); syncPhotoBadges(); paintPhotoBox();
+  renderPts(); renderTexts(); syncPhotoBadges(); paintPhotoBox();
   // 조용히 실패하면 "붙인 줄 알았는데 없는" 상태가 된다 — 결과를 반드시 말한다
   toast(done ? ('사진 '+done+'장을 붙였습니다'+(err?(' · '+err+'장 실패'):''))
              : '사진을 저장하지 못했습니다 (브라우저 저장공간·형식을 확인하세요)');
@@ -1315,7 +1364,7 @@ async function delPhoto(id){
   URL.revokeObjectURL(p.photos[i].url);
   p.photos.splice(i,1);
   try{ await photoDrop(id); }catch(e){ console.warn('사진 삭제 실패', e); }
-  renderPts(); syncPhotoBadges(); paintPhotoBox();
+  renderPts(); renderTexts(); syncPhotoBadges(); paintPhotoBox();
 }
 /* 불러온 파일의 사진(data URI)을 Blob 으로 되돌려 IndexedDB 에 넣는다. 자동저장
    경로와 형태를 하나로 맞춰야 새로고침 뒤에도 같은 코드로 복원된다. */
@@ -1329,7 +1378,8 @@ async function importPhotos(p, items){
     if(!b) continue;                        // 검증은 photosOf 에서 이미 끝났다
     try{ await addPhotoBlob(p, b, it.name); }catch(e){ console.warn('사진 저장 실패', e); }
   }
-  if(pts.indexOf(p)>=0){ renderPts(); syncPhotoBadges(); }
+  // await 도중 주인이 지워졌을 수 있다 — 살아 있을 때만 다시 그린다
+  if(ownerOf(p.pid)){ renderPts(); renderTexts(); syncPhotoBadges(); }
 }
 
 /* ---------- 사진 팝업 ----------
@@ -1340,8 +1390,8 @@ async function importPhotos(p, items){
    └────────────────────────────────────────────────────────────────────┘ */
 let photoBox=null;
 function openPhotos(pid, pan){
-  const i=pts.findIndex(p=>p.pid===pid);
-  if(i<0) return;
+  const o=ownerOf(pid);
+  if(!o) return;
   photoTarget=pid;
   if(!photoBox){
     const el=document.createElement('div');
@@ -1352,11 +1402,11 @@ function openPhotos(pid, pan){
     photoBox=new kakao.maps.CustomOverlay({content:el, xAnchor:.5, yAnchor:1.25, zIndex:Z.photoBox});
     photoBox.el=el;
   }
-  photoBox.setPosition(LL(pts[i]));
+  photoBox.setPosition(LL(ownerPos(o)));
   photoBox.setMap(map);
-  // 패널 목록에서 열면 그 지점이 화면 밖일 수 있다 — 팝업만 열면 아무 일도
-  // 안 일어난 것처럼 보이므로 지도를 그리로 옮긴다(마커 클릭 때는 이미 보인다).
-  if(pan) map.panTo(LL(pts[i]));
+  // 패널 목록에서 열면 그게 화면 밖일 수 있다 — 팝업만 열면 아무 일도 안 일어난
+  // 것처럼 보이므로 지도를 그리로 옮긴다(마커 클릭 때는 이미 보인다).
+  if(pan) map.panTo(LL(ownerPos(o)));
   paintPhotoBox();
 }
 function closePhotos(){
@@ -1367,10 +1417,10 @@ function paintPhotoBox(){
   const p=photoPt();
   if(!p){ closePhotos(); return; }
   if(!photoBox) return;
-  // 지점 이름은 사용자·파일에서 온 문자열이라 반드시 이스케이프한다.
+  // 지점 이름·텍스트 내용은 사용자·파일에서 온 문자열이라 반드시 이스케이프한다.
   // 사진 id 는 우리가 만든 [0-9a-z] 뿐이라 속성 안에 그대로 넣어도 안전하다.
   photoBox.el.innerHTML=
-    '<div class="ph-head"><b>'+esc(nameOf(pts.indexOf(p)))+'</b>'
+    '<div class="ph-head"><b>'+esc(ownerTitle(p))+'</b>'
     + '<button onclick="closePhotos()" title="닫기">✕</button></div>'
     + (p.photos.length
         ? '<div class="ph-grid">'+p.photos.map(ph=>
@@ -1387,6 +1437,7 @@ function syncPhotoBadges(){
   markers.forEach((m,i)=>{
     if(pts[i]) m.setImage(markerImage(colorOf(i), letterOf(i), !!pts[i].photos.length));
   });
+  texts.forEach(paintText);   // 텍스트는 마커가 없다 — 라벨 안의 📷 n 이 같은 역할
 }
 
 /* ---------- 확대 보기 (엔진 무관) ---------- */
@@ -1443,7 +1494,10 @@ function buildGeoJSON(photoMap){
       labelPos:[a.labelPos.lng, a.labelPos.lat]}}));
   texts.forEach(t=>feats.push({type:'Feature',
     geometry:{type:'Point', coordinates:[t.pos.lng,t.pos.lat]},
-    properties:{kind:'text', text:t.text, fontSize:t.fontSize}}));
+    // pid·photos 는 지점과 같은 규칙이다 — 텍스트도 사진을 가질 수 있어서,
+    // pid 를 안 내보내면 파일을 다시 열었을 때 사진이 주인을 잃는다.
+    properties:{kind:'text', text:t.text, fontSize:t.fontSize, pid:t.pid,
+                photos:(photoMap && photoMap[t.pid]) || undefined}}));
   // 경로는 GW 지점에서 파생되는 값이다. 외부 뷰어에서 선이 보이도록 내보내기에는
   // 넣되, 불러올 때는 무시하고 지점에서 다시 그린다(중복 생성 방지).
   if(pts.length>=2) feats.push({type:'Feature',
@@ -1506,7 +1560,10 @@ function parseGeoJSON(obj){
       const c=coord(g.coordinates);
       if(!c){ log.push(at+'Point 좌표 형식/범위 오류 — 건너뜀'); return; }
       if(kind==='text'){
-        out.texts.push({pos:c, text:str(pr.text,200)||'텍스트', fontSize:clampNum(pr.fontSize,8,48,14)});
+        out.texts.push({pos:c, text:str(pr.text,200)||'텍스트', fontSize:clampNum(pr.fontSize,8,48,14),
+                        // pid 가 없는 파일(구버전·외부 제작)은 불러올 때 새로 만든다
+                        pid:str(pr.pid,40)||null,
+                        photos:photosOf(pr.photos, log, at)});
       }else{
         // kind 가 비어도 Point 는 GW 지점으로 받는다(외부에서 만든 파일 수용)
         // 예전에는 좌표만 받고 properties 를 통째로 버렸다. 이름이 사용자 데이터가

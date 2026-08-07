@@ -126,6 +126,41 @@ t('정상 파일: 지점1·영역1·텍스트1', ()=>{
 });
 t('반경은 보존(사용자 지정값)', ()=>assert.strictEqual(ctx.parseGeoJSON(good).out.radius,350));
 
+/* ---- 텍스트 사진: pid 가 곧 사진의 주인 열쇠다 ----
+   pid 를 흘리면 파일을 다시 열었을 때 사진이 미아가 되고, 그건 화면에
+   "사진이 없다"로만 보여서 조용히 유실된다. 왕복을 여기서 잡는다. */
+const T1PX='data:image/png;base64,iVBORw0KGgo=';
+t('텍스트 pid·사진 왕복', ()=>{
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.365,33.402]},
+     properties:{kind:'text',text:'배선 주의',fontSize:16,pid:'abc123',
+                 photos:[{uri:T1PX,name:'배선.jpg'}]}}]});
+  assert.strictEqual(out.texts[0].pid,'abc123');
+  assert.strictEqual(out.texts[0].photos.length,1);
+  assert.strictEqual(out.texts[0].photos[0].name,'배선.jpg');
+});
+t('pid 없는 구버전 텍스트는 null (불러올 때 새로 만든다)', ()=>{
+  const {out}=ctx.parseGeoJSON(good);
+  assert.strictEqual(out.texts[0].pid,null);
+  assert.strictEqual(out.texts[0].photos.length,0);
+});
+/* 하향호환은 사용자가 명시적으로 요구한 성질이다. pid·photos 가 없던 시절의
+   파일을 열었을 때 경고가 한 건이라도 뜨면, 멀쩡한 파일을 사용자가 손상된
+   것으로 오해한다 — 조용히 깨지는 자리라 여기에 못을 박는다. */
+t('구버전 파일(pid·photos 없음)은 경고 0건으로 읽힌다', ()=>{
+  const {log,out}=ctx.parseGeoJSON(good);
+  assert.strictEqual(log.length,0,'경고: '+JSON.stringify(log));
+  assert.strictEqual(out.pts[0].pid,null);
+  assert.strictEqual(out.pts[0].photos.length,0);
+});
+t('텍스트 사진도 지점과 같은 검증을 탄다(2MB 초과 거부)', ()=>{
+  const big='data:image/png;base64,'+'A'.repeat(2*1024*1024);
+  const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
+    {type:'Feature',geometry:{type:'Point',coordinates:[126.365,33.402]},
+     properties:{kind:'text',text:'x',pid:'p1',photos:[{uri:big}]}}]});
+  assert.strictEqual(out.texts[0].photos.length,0);
+});
+
 // ---- 지점 이름: 사용자 데이터라 왕복해야 한다 (label·color 는 순서에서 파생) ----
 t('지점 이름 보존', ()=>{
   const {out}=ctx.parseGeoJSON({type:'FeatureCollection',features:[
