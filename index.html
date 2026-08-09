@@ -1786,18 +1786,23 @@ function initMap(){
   // relayout() 을 불러줘야 타일과 좌표가 다시 맞는다(구글은 자동).
   document.getElementById('panel').addEventListener('transitionend', ()=>map.relayout());
 
-  // SDK 가 붙어도 도메인이 등록 안 됐으면 타일만 안 온다(회색 화면).
-  // 일정 시간 안에 타일이 한 번도 안 그려지면 같은 안내를 띄운다.
-  //
-  // 데드라인은 이 함수 끝의 locateMe() 와 경합한다. 측위가 끝나면 focusOnGps()
-  // 가 지도를 현장으로 통째로 옮기고, 그때 받던 타일 배치는 버려진 뒤 새 지역
-  // 것을 처음부터 다시 받는다(스카이뷰 위성타일이라 무겁다). 그래서 "타일이
-  // 아직" 인 상태가 도메인 문제 없이도 흔하게 만들어진다 — 데드라인을 넉넉히
-  // 잡고, 늦게 온 타일이 안내를 스스로 걷게 한다. 판정 근거는 tilesloaded
-  // 하나뿐이므로 띄우는 쪽과 걷는 쪽을 같은 신호에 묶는다.
-  let tilesOk=false;
-  kakao.maps.event.addListener(map,'tilesloaded', ()=>{ tilesOk=true; hideMapError(); });
-  setTimeout(()=>{ if(!tilesOk) showMapError(); }, 12000);
+  /* SDK 가 붙어도 도메인이 등록 안 됐으면 타일만 안 온다(회색 화면).
+     일정 시간 안에 타일이 하나도 안 그려지면 같은 안내를 띄운다.
+
+     판정을 tilesloaded 이벤트로 하면 안 된다. 실측(PC 크롬, 2026-08-08)에서
+     타일이 52/52 다 그려지고 배율·중심도 정상인데 이 이벤트가 한 번도 안 왔다 —
+     안내가 간헐적으로 뜨던 원인이 이것이었고, 지도는 내내 멀쩡했다.
+     카카오는 이벤트를 동기로 던진다(setBounds 안에서 idle 이 먼저 찍혔다).
+     그래서 타일이 캐시에 있으면 첫 tilesloaded 가 지도 생성·setMapType 도중에
+     튀어, 아래에서 리스너를 붙이기 전에 이미 지나가 버린다. 캐시가 더울수록
+     그 창이 좁아져 '가끔' 재현됐다.
+
+     그려진 타일 <img> 를 직접 세는 쪽이 답이다 — 이벤트를 놓쳐도 상태는 남는다. */
+  const tilesDrawn = () => Array.prototype.some.call(
+    document.getElementById('map').querySelectorAll('img'), im => im.naturalWidth>0);
+  // idle 은 정상 동작이 확인된 신호다. 늦게 온 타일로 안내를 걷는 데 쓴다.
+  kakao.maps.event.addListener(map,'idle', ()=>{ if(tilesDrawn()) hideMapError(); });
+  setTimeout(()=>{ if(!tilesDrawn()) showMapError(); }, 12000);
 
   /* 화면 위치 우선순위: 복원된 작업 > 현재 위치 > 기본 중심(회사).
      작업이 있으면 측위가 화면을 뺏지 않는다 — PC 측위는 IP 기반이라 ±20 km 씩
