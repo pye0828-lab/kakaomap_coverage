@@ -87,7 +87,8 @@
                      border:1px solid var(--line);background:var(--bg);color:var(--txt);font-size:12px}
   /* 지도에서 마커를 누르면 해당 행을 표시해 준다(지도 ↔ 패널 연결) */
   .pt.hl{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
-  .pt .info .ll{font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* 지점(.pt)과 텍스트(.item-row) 양쪽에서 쓴다 — 눌러서 좌표를 복사하는 자리 */
+  .ll{font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .pt .info .seg{font-size:10px;color:var(--dim)}
   .pt .del{color:var(--danger);background:none;border:none;font-size:15px;padding:2px 6px}
 
@@ -1022,6 +1023,7 @@ function addText(pos,o){
     t.pos=p;
     // 사진 팝업이 이 텍스트의 것이면 같이 따라간다(지점 마커 dragend 와 같은 처리)
     if(photoBox && photoTarget===t.pid) photoBox.setPosition(LL(p));
+    renderTexts();   // 패널의 좌표 표시가 옮긴 자리를 따라가야 한다
     saveLocal();
   });
   paintText(t);
@@ -1092,6 +1094,12 @@ function renderTexts(){
     </div>
     <div class="item-row">
       <label>크기<input type="range" min="8" max="48" step="1" value="${t.fontSize}" oninput="editText(${t.id},'fontSize',this.value)"></label>
+    </div>
+    <!-- 텍스트를 특정 좌표에 놓는 쓰임이 있다. 지점처럼 좌표를 보이고 눌러서
+         복사하게 한다 — 드래그로 옮기면 이 값도 같이 갱신된다. -->
+    <div class="item-row">
+      <div class="ll" onclick="copyText('${fmt(t.pos.lat)}, ${fmt(t.pos.lng)}')"
+           title="눌러서 좌표 복사">${fmt(t.pos.lat)}, ${fmt(t.pos.lng)}</div>
     </div>
   </div>`;}).join('');
 }
