@@ -420,5 +420,46 @@ t('ringOf: 이미 닫혀 있으면 그대로', ()=>{
   assert.strictEqual(ctx.ringOf(p).length,4);
 });
 
+// ---- 8. 드라이브 링크에서 파일 ID 뽑기 ----
+// 붙여넣는 형태가 제각각이라 여기가 조용히 틀리면 "링크 형식을 확인하세요"만 뜬다.
+// ID 를 못 뽑으면 요청 자체가 안 나가므로, 형태별로 한 줄씩 남긴다.
+const ID='1A2b3C4d5E6f7G8h9I0jKlMnOpQrStUv';
+t('driveFileId: 공유 버튼 링크(/file/d/…/view)', ()=>
+  assert.strictEqual(ctx.driveFileId('https://drive.google.com/file/d/'+ID+'/view?usp=sharing'),ID));
+t('driveFileId: /open?id= 형태', ()=>
+  assert.strictEqual(ctx.driveFileId('https://drive.google.com/open?id='+ID),ID));
+t('driveFileId: uc?export=download&id= 형태', ()=>
+  assert.strictEqual(ctx.driveFileId('https://drive.google.com/uc?export=download&id='+ID),ID));
+t('driveFileId: ID 만 붙여넣어도 받는다', ()=>
+  assert.strictEqual(ctx.driveFileId('  '+ID+'  '),ID));
+// 임의 URL 을 그대로 fetch 하지 않는다는 보장이 이 두 줄이다(요청처는 googleapis.com 고정).
+t('driveFileId: 관계없는 URL 은 null', ()=>
+  assert.strictEqual(ctx.driveFileId('https://example.com/evil.geojson'),null));
+t('driveFileId: 빈 값·undefined 는 null', ()=>{
+  assert.strictEqual(ctx.driveFileId(''),null);
+  assert.strictEqual(ctx.driveFileId(undefined),null);
+});
+
+// ---- 9. 공유 주소 조합 ----
+// 여기가 조용히 틀리면 링크를 받은 쪽에서만 실패한다 — 만든 사람은 끝까지 모른다.
+const withInput = (val,fn)=>{
+  const box={value:val}, orig=ctx.document.getElementById;
+  ctx.document.getElementById=()=>box;
+  try{ return fn(); } finally { ctx.document.getElementById=orig; }
+};
+ctx.location.origin='https://yepark.co.kr';
+ctx.location.pathname='/bovicare-gmapkakao/';
+t('gdShareURL: 현재 주소 + ?gd=<파일 ID>', ()=>
+  assert.strictEqual(
+    withInput('https://drive.google.com/file/d/'+ID+'/view?usp=sharing', ctx.gdShareURL),
+    'https://yepark.co.kr/bovicare-gmapkakao/?gd='+ID));
+// 링크 통째가 아니라 ID 를 넣는 게 의도다(URL 안에 URL 이 들어가면 두 배로 길어진다).
+t('gdShareURL: 링크가 아니라 ID 가 들어간다', ()=>
+  assert.ok(!withInput('https://drive.google.com/file/d/'+ID+'/view', ctx.gdShareURL).includes('drive.google.com')));
+t('gdShareURL: 유효한 링크가 아니면 빈 문자열(버튼을 숨기는 조건)', ()=>{
+  assert.strictEqual(withInput('', ctx.gdShareURL),'');
+  assert.strictEqual(withInput('https://example.com/x', ctx.gdShareURL),'');
+});
+
 console.log('\n'+(fail?('실패 '+fail+'건 / '):'')+'통과 '+pass+'건');
 process.exit(fail?1:0);
