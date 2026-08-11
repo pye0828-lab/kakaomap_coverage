@@ -461,5 +461,55 @@ t('gdShareURL: 유효한 링크가 아니면 빈 문자열(버튼을 숨기는 �
   assert.strictEqual(withInput('https://example.com/x', ctx.gdShareURL),'');
 });
 
+// ---- 10. 마커 이름 라벨: 그림이 커져도 좌표는 안 움직여야 한다 ----
+// 이름 폭이 어림값이라 크기 계산이 조용히 틀어질 수 있다. 틀어지면 마커가
+// 좌표에서 밀리는데(= 측정 결과가 거짓말이 된다) 화면으로는 알아채기 어렵다.
+ctx.kakao={maps:{
+  MarkerImage:class{ constructor(src,size,opt){ this.src=src; this.size=size; this.offset=opt.offset; } },
+  Size:class{ constructor(w,h){ this.w=w; this.h=h; } },
+  Point:class{ constructor(x,y){ this.x=x; this.y=y; } }}};
+const img = (name,hasPhoto)=>ctx.markerImage('#ff0000','A',!!hasPhoto,name);
+t('이름이 없으면 그림 크기가 예전 그대로', ()=>{
+  const a=img(''), b=img('',true);
+  assert.deepStrictEqual([a.size.w,a.size.h,a.offset.x,a.offset.y],[28,28,14,14]);
+  assert.deepStrictEqual([b.size.w,b.size.h,b.offset.x,b.offset.y],[36,36,14,22]);
+});
+t('이름이 길어도 anchor 는 계속 원의 중심', ()=>{
+  ['가','본관 게이트웨이','WWWWWWWWWW'].forEach(n=>{
+    [false,true].forEach(hp=>{
+      const im=img(n,hp), r=12+1;                    // 원 반지름 + 흰 테두리
+      assert.ok(im.offset.y===(hp?22:14), n+' y');
+      assert.ok(im.offset.x>=r && im.offset.x+r<=im.size.w, n+' x='+im.offset.x+' w='+im.size.w);
+    });
+  });
+});
+t('이름이 그림 밖으로 안 나간다', ()=>{
+  ['가나다라마바사아자차','Gateway-01'].forEach(n=>{
+    const im=img(n), half=run('nameWidth('+JSON.stringify(n)+')')/2;
+    assert.ok(im.offset.x-half>=0 && im.offset.x+half<=im.size.w, n+' 폭 초과');
+    assert.ok(im.size.h>28, n+' 높이가 안 늘었다');
+  });
+});
+// 이름은 사용자·파일에서 온다 — SVG 안에 그대로 들어가면 그림이 통째로 깨진다.
+t('이름 이스케이프', ()=>{
+  const svg=decodeURIComponent(img('<b>&"x').src.split(',')[1]);
+  assert.ok(!svg.includes('<b>') && svg.includes('&lt;b&gt;'), svg.slice(-160));
+});
+
+// ---- 11. 지점 순서 바꾸기 ----
+// 순서는 표시가 아니라 계산이다(구간 거리·폐합 둘레가 배열 순서로 나온다).
+// 원소를 통째로 옮기지 않으면 이름·사진(pid)이 엉뚱한 지점에 가서 붙는다.
+const moved = (arr,i,j)=>{ const a=arr.slice(); run('moveItem')(a,i,j); return a; };
+t('moveItem: 한 칸 위로 (F→E 자리)', ()=>
+  assert.deepStrictEqual(moved(['A','B','C'],2,1), ['A','C','B']));
+t('moveItem: 한 칸 아래로', ()=>
+  assert.deepStrictEqual(moved(['A','B','C'],0,1), ['B','A','C']));
+t('moveItem: 두 칸 이상도 자리 그대로', ()=>
+  assert.deepStrictEqual(moved(['A','B','C','D'],3,1), ['A','D','B','C']));
+t('moveItem: 이름·사진이 지점을 따라간다', ()=>{
+  const a=moved([{name:'가',pid:'p1'},{name:'나',pid:'p2'},{name:'다',pid:'p3'}],2,0);
+  assert.deepStrictEqual(a.map(p=>p.name+':'+p.pid), ['다:p3','가:p1','나:p2']);
+});
+
 console.log('\n'+(fail?('실패 '+fail+'건 / '):'')+'통과 '+pass+'건');
 process.exit(fail?1:0);

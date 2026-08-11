@@ -90,6 +90,10 @@
   /* 지점(.pt)과 텍스트(.item-row) 양쪽에서 쓴다 — 눌러서 좌표를 복사하는 자리 */
   .ll{font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .pt .info .seg{font-size:10px;color:var(--dim)}
+  /* 순서 바꾸기. 행이 3줄(이름·좌표·구간)이라 세로로 쌓아야 이름칸을 안 밀어낸다 */
+  .pt .ord{display:flex;flex-direction:column;gap:2px;flex-shrink:0}
+  .pt .ord button{background:none;border:none;color:var(--dim);font-size:11px;line-height:1;padding:4px 5px}
+  .pt .ord button:disabled{opacity:.25;cursor:default}
   .pt .del{color:var(--danger);background:none;border:none;font-size:15px;padding:2px 6px}
 
   #totalDist{font-family:var(--mono);font-size:20px;font-weight:700;color:var(--acc2)}
@@ -285,6 +289,8 @@
         <div class="muted" style="font-size:10px;margin-top:5px">
           탭 = 지점 추가 · 우클릭(길게 누르기) = 지정 종료 · 마커 드래그로 이동<br>
           마커에 <b>마우스를 올리면</b> 이름·좌표가 뜨고, <b>클릭하면</b> 해당 지점이 목록에 표시되며 사진 팝업이 열립니다<br>
+          아래 목록에 <b>이름을 적으면 마커 아래에 같이 그려집니다</b> (캡처에 남습니다 · 10자까지)<br>
+          목록의 <b>▲▼로 순서를 바꿉니다</b> — 빠뜨린 지점을 나중에 찍어 끼워 넣을 때 쓰세요 (거리도 다시 계산됩니다)<br>
           📷 = 설치 사진 첨부 (사진이 붙은 지점은 지도 마커에도 카메라 배지가 생깁니다)
         </div>
         <!-- 지점 사진 입력. capture="environment" 를 일부러 쓰지 않는다 — 그걸 붙이면
@@ -581,21 +587,48 @@ const toPt = ll => ({lat:ll.getLat(), lng:ll.getLng()});
    │ SVG 문자열 자체는 엔진과 무관하고, MarkerImage 만 카카오 API 다.    │
    └────────────────────────────────────────────────────────────────────┘
    배지가 붙으면 그림이 커지지만 offset(14,cy)이 원의 중심을 가리키므로 마커가
-   찍히는 좌표는 그대로다 — 사진을 붙여도 지점이 움직이지 않는다. */
-function markerImage(color, letter, hasPhoto){
-  const w=hasPhoto?36:28, cy=hasPhoto?22:14;
-  let svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+w+'">'
+   찍히는 좌표는 그대로다 — 사진을 붙여도 지점이 움직이지 않는다.
+
+   ┌─ 이식 경계 (1/2-b) ─ 이름 라벨 ────────────────────────────────────┐
+   │ 지점 이름을 원 아래에 같이 그린다. 이 도구의 산출물은 화면 캡처인데 │
+   │ 이름이 패널·툴팁에만 있으면 캡처에 안 남고, 터치기기엔 툴팁 자체가  │
+   │ 없다. 라벨을 CustomOverlay 로 따로 띄우지 않는 이유는 위와 같다 —   │
+   │ 드래그·삭제 재정렬마다 둘을 맞춰야 한다.                            │
+   └────────────────────────────────────────────────────────────────────┘ */
+/* 이름 폭은 SVG 안에서 실측할 수 없다(그려지기 전에 크기를 정해야 한다).
+   ponytail: 한글·한자·가나는 한 글자 = 폰트크기, 그 외는 절반쯤으로 어림한다.
+   빗나가도 text-anchor=middle 이라 글자는 중앙에 남고 좌우 여백만 달라진다.
+   정확히 재려면 숨은 DOM 에 canvas measureText 를 태워야 하는데, 마커 그림
+   하나 때문에 붙일 비용이 아니다. */
+const NAME_FS=11;
+const nameWidth = s => [...String(s)].reduce((w,ch)=>w+(ch.codePointAt(0)>0x2000?NAME_FS:NAME_FS*0.55), 0);
+function markerImage(color, letter, hasPhoto, name){
+  const w0=hasPhoto?36:28, cy=hasPhoto?22:14;
+  // 이름이 원보다 넓으면 그림 왼쪽으로도 넘친다 — 기존 그림을 dx 만큼 밀고
+  // 그만큼 폭을 키운다(offset 도 같이 밀어 원 중심은 계속 좌표 위에 있다).
+  const half = name ? nameWidth(name)/2+2 : 0;
+  const dx = Math.max(0, half-14), cx = 14+dx;
+  // 폭은 올림한다 — 소수 픽셀 크기를 주면 브라우저가 그림을 흐리게 늘린다
+  const w = Math.ceil(Math.max(w0+dx, cx+half)), h = cy+14+(name ? NAME_FS+5 : 0);
+  let svg='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'">'
+    +'<g transform="translate('+dx+',0)">'
     +'<circle cx="14" cy="'+cy+'" r="12" fill="'+color+'" stroke="#fff" stroke-width="2"/>'
     +'<text x="14" y="'+(cy+4.5)+'" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="800" fill="#111">'+letter+'</text>';
   if(hasPhoto) svg+='<circle cx="26" cy="10" r="9" fill="#101418" stroke="#fff" stroke-width="1.5"/>'
     +'<rect x="21.2" y="7.4" width="9.6" height="7" rx="1.6" fill="#fff"/>'
     +'<rect x="24" y="5.8" width="4" height="2.2" rx=".8" fill="#fff"/>'
     +'<circle cx="26" cy="10.9" r="2.2" fill="#101418"/>';
+  svg+='</g>';
+  // 위성영상 위에서도 읽히게 검은 외곽선을 글자 뒤로 깐다(paint-order).
+  // 이름은 사용자·파일에서 온 문자열이라 SVG 로 넣기 전에 반드시 이스케이프한다.
+  if(name) svg+='<text x="'+cx+'" y="'+(cy+14+NAME_FS)+'" text-anchor="middle" font-family="sans-serif"'
+    +' font-size="'+NAME_FS+'" font-weight="700" fill="#fff" stroke="#101418" stroke-width="3"'
+    +' stroke-linejoin="round" paint-order="stroke">'+esc(name)+'</text>';
   svg+='</svg>';
   return new kakao.maps.MarkerImage(
     'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg),
-    new kakao.maps.Size(w,w),
-    {offset:new kakao.maps.Point(14,cy)});   // 원의 중심이 좌표에 오도록
+    new kakao.maps.Size(w,h),
+    {offset:new kakao.maps.Point(cx,cy)});   // 원의 중심이 좌표에 오도록
 }
 const letterOf = i => String.fromCharCode(65+(i%26));   // A, B, C...
 
@@ -671,6 +704,7 @@ function editPt(i,v){
   if(!p) return;
   p.name=String(v).slice(0,40);
   syncMarkerTitles();
+  syncMarkerImages();   // 이름이 마커 그림 안에 들어가므로 한 글자마다 다시 그린다
   updateDist();
   saveLocal();
 }
@@ -1332,7 +1366,7 @@ async function restorePhotos(){
     if(o && o.photos.length<PHOTO_MAX_PER_PT) attachPhoto(o, r.id, r.blob, r.name);
     else { orphan++; photoDrop(r.id).catch(()=>{}); }
   });
-  if(photoOwners().some(o=>o.photos.length)){ renderPts(); renderTexts(); syncPhotoBadges(); }
+  if(photoOwners().some(o=>o.photos.length)){ renderPts(); renderTexts(); syncMarkerImages(); }
   if(orphan) console.info('주인 없는 사진 '+orphan+'장을 정리했습니다');
 }
 
@@ -1375,7 +1409,7 @@ async function onPhotoPick(input){
     try{ await addPhotoBlob(p, await shrinkImage(f), photoName(f.name)); done++; }
     catch(e){ err++; console.warn('사진 저장 실패', e); }
   }
-  renderPts(); renderTexts(); syncPhotoBadges(); paintPhotoBox();
+  renderPts(); renderTexts(); syncMarkerImages(); paintPhotoBox();
   // 조용히 실패하면 "붙인 줄 알았는데 없는" 상태가 된다 — 결과를 반드시 말한다
   toast(done ? ('사진 '+done+'장을 붙였습니다'+(err?(' · '+err+'장 실패'):''))
              : '사진을 저장하지 못했습니다 (브라우저 저장공간·형식을 확인하세요)');
@@ -1388,7 +1422,7 @@ async function delPhoto(id){
   URL.revokeObjectURL(p.photos[i].url);
   p.photos.splice(i,1);
   try{ await photoDrop(id); }catch(e){ console.warn('사진 삭제 실패', e); }
-  renderPts(); renderTexts(); syncPhotoBadges(); paintPhotoBox();
+  renderPts(); renderTexts(); syncMarkerImages(); paintPhotoBox();
 }
 /* 불러온 파일의 사진(data URI)을 Blob 으로 되돌려 IndexedDB 에 넣는다. 자동저장
    경로와 형태를 하나로 맞춰야 새로고침 뒤에도 같은 코드로 복원된다. */
@@ -1403,7 +1437,7 @@ async function importPhotos(p, items){
     try{ await addPhotoBlob(p, b, it.name); }catch(e){ console.warn('사진 저장 실패', e); }
   }
   // await 도중 주인이 지워졌을 수 있다 — 살아 있을 때만 다시 그린다
-  if(ownerOf(p.pid)){ renderPts(); renderTexts(); syncPhotoBadges(); }
+  if(ownerOf(p.pid)){ renderPts(); renderTexts(); syncMarkerImages(); }
 }
 
 /* ---------- 사진 팝업 ----------
@@ -1455,11 +1489,15 @@ function paintPhotoBox(){
         : '<div class="ph-empty">아직 사진이 없습니다.</div>')
     + '<div class="ph-btns"><button onclick="pickPhoto()">📷 사진 추가</button></div>';
 }
-/* 마커 배지 갱신. 지점 순서·색과 함께 다시 그려야 해서 markerImage() 를 통째로
-   갈아끼운다(카카오 Marker 에는 부분 갱신이 없다). */
-function syncPhotoBadges(){
+/* 마커 그림 갱신(순서·색·사진 배지·이름). 카카오 Marker 에는 부분 갱신이 없어
+   markerImage() 를 통째로 갈아끼운다 — 그래서 무엇이 바뀌었든 이 함수 하나다.
+   반경원 색도 여기서 같이 칠한다. 색은 마커와 같은 인덱스에서 파생되므로
+   순서가 바뀌면 둘이 함께 틀어진다 — 갱신을 두 군데로 나누면 어긋난다. */
+function syncMarkerImages(){
   markers.forEach((m,i)=>{
-    if(pts[i]) m.setImage(markerImage(colorOf(i), letterOf(i), !!pts[i].photos.length));
+    if(!pts[i]) return;
+    m.setImage(markerImage(colorOf(i), letterOf(i), !!pts[i].photos.length, mapLabelOf(i)));
+    circles[i].setOptions({fillColor:colorOf(i), strokeColor:colorOf(i)});
   });
   texts.forEach(paintText);   // 텍스트는 마커가 없다 — 라벨 안의 📷 n 이 같은 역할
 }
@@ -2127,6 +2165,11 @@ const nameOf  = i => (pts[i] && pts[i].name) || letterOf(i);
 const titleOf = i => nameOf(i)+' · '+fmt(pts[i].lat)+', '+fmt(pts[i].lng);
 // 구간 표는 폭이 좁다 — 긴 이름이 들어오면 줄을 깨뜨리므로 잘라 쓴다
 const shortName = i => { const s=nameOf(i); return s.length>10 ? s.slice(0,9)+'…' : s; };
+/* 마커 아래에 그릴 이름. 이름을 안 적은 지점은 아무것도 안 그린다 — 몇 번째인지는
+   원 안의 A·B·C 가 이미 말하고 있고, 전부 그리면 지점이 많을 때 화면이 덮인다.
+   즉 표시량은 이름을 적을지 말지로 사용자가 이미 정하고 있다(별도 토글 불필요).
+   길이 자르기는 구간 표와 같은 문제라 shortName 을 그대로 쓴다. */
+const mapLabelOf = i => (pts[i] && pts[i].name) ? shortName(i) : '';
 function syncMarkerTitles(){
   markers.forEach((m,i)=>{ if(m.setTitle) m.setTitle(titleOf(i)); });
 }
@@ -2138,7 +2181,7 @@ function addPt(lat,lng,name,pid,photoItems){
   const p={lat, lng, name:name||'', pid:pid||newPid(), photos:[]};
   pts.push(p);
   const m=new kakao.maps.Marker({position:LL({lat,lng}),
-    image:markerImage(colorOf(idx), letterOf(idx), false), draggable:true,
+    image:markerImage(colorOf(idx), letterOf(idx), false, mapLabelOf(idx)), draggable:true,
     title:titleOf(idx)});   // 네이티브 툴팁 — 별도 팝업이 없어 드래그와 충돌하지 않는다
   m.setMap(map);
   // 우클릭은 이미 '지정 종료'와 '다각형 닫기'에 쓰인다 — 일반 클릭을 쓴다(터치에서도 동작)
@@ -2172,13 +2215,24 @@ function delPt(i){
   // 지점이 사라지면 그 사진도 브라우저에서 지운다 — 안 지우면 계속 쌓인다
   freePhotos(gone);
   photoDropByPid(gone.pid).catch(e=>console.warn('사진 삭제 실패', e));
-  // 라벨·색상 재정렬 (A,B,C... 순서에 맞게)
-  markers.forEach((m,j)=>{
-    m.setImage(markerImage(colorOf(j), letterOf(j), !!pts[j].photos.length));
-    circles[j].setOptions({fillColor:colorOf(j), strokeColor:colorOf(j)});
-  });
+  syncMarkerImages();   // 뒤 지점들이 한 칸씩 당겨져 A·B·C 글자와 색이 밀린다
   hideRubber();
   renderPts(); drawLine(); updateDist();
+}
+/* ---------- 지점 순서 바꾸기 ----------
+   순서는 표시가 아니라 계산이다 — 구간 거리·총거리·폐합 둘레가 모두 배열 순서로
+   나온다. 지점은 항상 배열 끝에 붙으므로(addPt) 중간에 빠뜨린 지점을 나중에 찍으면
+   여기서 끌어올린다. 지우고 다시 찍는 길도 있지만 그러면 붙여둔 사진까지 날아간다. */
+const moveItem = (a,i,j) => a.splice(j, 0, ...a.splice(i,1));
+function movePt(i,dir){
+  const j=i+dir;
+  if(!pts[i] || !pts[j]) return;                  // 목록 양 끝 (버튼도 disabled 지만 방어)
+  // 세 배열은 같은 인덱스로 짝지어져 있다. 원소를 통째로 옮기므로 이름·pid·사진이
+  // 따라온다 — delPt 의 splice 와 같은 이유다(필드를 옮기면 사진이 미아가 된다).
+  [pts,markers,circles].forEach(a=>moveItem(a,i,j));
+  syncMarkerImages();                             // A·B·C 글자와 색은 인덱스에서 파생된다
+  renderPts(); drawLine(); updateDist();
+  highlightPt(j);                                 // 어디로 갔는지 눈으로 쫓을 수 있게
 }
 function clearPts(){
   closePhotos();
@@ -2206,6 +2260,10 @@ function renderPts(){
     if(i>0) seg='이전 지점에서 '+fmtDist(haversine(pts[i-1],p));
     const n=p.photos.length;
     return `<div class="pt" id="pt-${i}">
+      <div class="ord">
+        <button onclick="movePt(${i},-1)" ${i?'':'disabled'} title="위로 (앞 지점과 순서 교체)">▲</button>
+        <button onclick="movePt(${i},1)" ${i<pts.length-1?'':'disabled'} title="아래로 (뒤 지점과 순서 교체)">▼</button>
+      </div>
       <div class="badge" style="background:${colorOf(i)}">${letterOf(i)}</div>
       <div class="info">
         <input type="text" class="nm" value="${esc(p.name||'')}" maxlength="40"
