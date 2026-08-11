@@ -24,20 +24,22 @@
   - 본문에는 **비자명한 '왜'만** 적는다. 코드에 보이는 것, 주석에 이미 있는 것, 검토하며 재본 것은 옮겨 적지 않는다.
   - 근거를 길게 남겨야 하면 **소스 주석이나 README 로 간다.** 커밋 메시지는 문서가 아니다.
 
-### 1.2 브랜치 — 원격은 `main` 하나다 (에이전트 필독)
+### 1.2 브랜치 — 만들지 않는다 (에이전트 필독)
 
-**작업 브랜치를 origin 에 푸시하지 않는다.** 브랜치는 로컬에서 얼마든지 가져도 되지만, 서버에 올라가는 건 `main` 뿐이다.
+**브랜치를 새로 만들지 않는다. 로컬에도 만들지 않는다.** 이 레포에 있는 브랜치는 `main` 하나이고, 원격에 가는 것도 `main` 하나다.
 
-- 이유: 이 레포는 1인 개발에 릴리즈처가 하나(`main` 워크트리 = 웹루트)다. 원격에 브랜치가 늘면 어느 게 서비스 중인지 추적 비용만 생기고 얻는 게 없다.
+- 이유: **이력을 한 줄로 읽으려는 것**이다. 사람이 `pull --rebase` 후 `push` 로 일직선을 유지하고 있어서, 브랜치가 생기면 그 목적이 깨진다. 1인 개발에 릴리즈처가 하나(`main` 워크트리 = 웹루트)라 브랜치로 얻는 것도 없다 — 어느 게 서비스 중인지 추적 비용만 생긴다.
+- 개발 사본(`-dev`)이 필요한 이유는 **롤백이 아니라 라이브를 직접 안 고치려는 것**뿐이다(§3.3.1). 그래서 이름 붙은 브랜치가 필요 없다 — **detached HEAD 로 둔다.** 워크트리가 브랜치를 요구하는 것처럼 보이는 건 같은 브랜치를 두 워크트리가 동시에 체크아웃 못 하기 때문인데, detach 하면 그 제약 자체가 없어진다.
 - 릴리즈 절차는 이것뿐이다:
   ```bash
-  git commit                                   # 개발 사본(-dev)에서
-  git -C <라이브경로> merge --ff-only <브랜치>   # 병합 커밋 없이
-  git -C <라이브경로> push origin main          # 원격에 가는 건 main 뿐
+  git commit                                    # 개발 사본(-dev, detached HEAD)에서
+  git -C <라이브경로> merge --ff-only <SHA>      # 브랜치명이 아니라 커밋 SHA 로
+  git -C <라이브경로> pull --rebase origin main  # 원격이 앞서 있으면 일직선으로 얹는다
+  git -C <라이브경로> push origin main           # 원격에 가는 건 main 뿐
   ```
   `--ff-only` 를 쓰는 이유: fast-forward 가 안 되면 이력이 갈라진 것이니 멈추고 사람에게 묻는다. 병합 커밋으로 덮지 않는다.
-- 푸시 후 `git ls-remote --heads origin` 이 `refs/heads/main` **한 줄**이어야 한다. 그 외가 보이면 지운다.
-- 작업 브랜치에 upstream 을 걸지 않는다(`-u` 금지). 걸리면 `git push` 만 쳐도 원격에 브랜치가 생긴다.
+- 끝나면 **`git branch` 와 `git ls-remote --heads origin` 이 각각 `main` 한 줄**이어야 한다. 그 외가 보이면 지운다(`git branch -d`).
+- upstream 을 브랜치에 걸지 않는다(`-u` 금지). 걸리면 `git push` 만 쳐도 원격에 브랜치가 생긴다.
 - 릴리즈 후 배포 확인은 §3.3 을 돌린다.
 
 ---
@@ -244,9 +246,16 @@ curl -sI https://yepark.co.kr/ | grep -i permissions-policy
 git worktree 로 뜬 사본에서 작업한 뒤 검증이 끝나면 옮긴다. 카카오 도메인 등록은
 `https://yepark.co.kr` **origin 단위**라 경로가 달라도 지도는 그대로 뜬다.
 
+**`-b` 로 브랜치를 만들지 않는다** — §1.2 대로 detached HEAD 로 뜬다. 사본은 라이브를
+직접 안 고치려고 두는 것이지 이력을 가르려는 게 아니다.
+
 ```bash
-git worktree add /var/www/html/webpage-kakaomap-coverage-dev -b <브랜치명>
+git worktree add --detach /var/www/html/webpage-kakaomap-coverage-dev main
+git -C /var/www/html/webpage-kakaomap-coverage-dev switch --detach main   # 이미 있으면 이걸로 되돌린다
 ```
+
+작업이 끝나면 라이브에서 그 커밋 SHA 를 ff-merge 한다(§1.2). 사본은 detached 인 채로
+두면 다음 작업에 그대로 쓴다 — 다시 `switch --detach main` 으로 최신에 맞추고 시작한다.
 
 nginx 쪽은 세 곳이 짝이다 — `location /bovicare-gmapkakao-dev/` (alias),
 내부 폴더명 차단 regex 의 `webpage-kakaomap-coverage-dev`, 그리고 위 두 정책 map.
